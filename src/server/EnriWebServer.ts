@@ -259,11 +259,23 @@ export class EnriWebServer {
           },
           offset: {
             type: "integer",
-            description: "Cursor read offset in characters (default: 0)."
+            description:
+              "Legacy alias for offset_chars. Cursor read offset in characters (default: 0)."
           },
           limit: {
             type: "integer",
-            description: "Cursor read limit in characters (default: max_chars)."
+            description:
+              "Legacy alias for limit_chars. Cursor read limit in characters (default: max_chars)."
+          },
+          offset_chars: {
+            type: "integer",
+            description:
+              "Cursor read offset in characters (default: 0). Prefer this current EnriProxy field name over offset."
+          },
+          limit_chars: {
+            type: "integer",
+            description:
+              "Cursor read limit in characters (default: max_chars). Prefer this current EnriProxy field name over limit."
           }
         },
         anyOf: [{ required: ["url"] }, { required: ["cursor"] }]

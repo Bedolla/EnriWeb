@@ -2,6 +2,15 @@
 
 All notable changes to EnriWeb are documented in this file.
 
+## 2026-06-19
+### Changed
+- Bumped package version to `0.1.1` for npm publishing.
+- Aligned the package Node.js engine requirement with the Enri runtime standard (`>=24`).
+- Updated the `web_fetch` MCP schema to advertise current EnriProxy pagination names (`offset_chars`, `limit_chars`) while keeping legacy aliases (`offset`, `limit`) documented for compatibility.
+### Testing
+- Ran: `npm test` (OK) - 4 files, 17 tests.
+- Ran: `npm run build` (OK).
+
 ## 2026-01-26
 ### Fixed
 - `web_fetch` now accepts `limit=0` in URL fetch calls by treating it as omitted (models sometimes emit `limit: 0` even though pagination only applies to cursor reads).

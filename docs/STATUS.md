@@ -1,10 +1,12 @@
 # EnriWeb Status
 
-Last Updated: 2026-06-19
+Last Updated: 2026-08-24
 
 ## Current State
 - EnriWeb is a client-side MCP server (npm: `@bedolla/enriweb`) exposing `web_search` and `web_fetch`; the package is prepared as version `0.1.1`.
 - Tools delegate to EnriProxy endpoints (`/v1/tools/web_search`, `/v1/tools/web_fetch`) for multi-tier execution.
+- `web_fetch` exposes the per-call `format` argument (`"text"` default | `"markdown"`) backed by EnriProxy's HTML projection flavors, plus cursor pagination via `offset_chars`/`limit_chars` (legacy `offset`/`limit` aliases accepted).
+- Every model-facing string (tool descriptions, parameter descriptions, errors, output headers) is Spanish per the monorepo convention; wire field names are unchanged.
 - Requires an EnriProxy API key configured under `auth.api_key_policy.keys[*].key` in EnriProxy.
 - `web_search` supports recency filters and allowlist/blocklist domain filters.
 - `web_search` enriches results with verified latest stable + prerelease versions when registry URLs are detected (npm, PyPI, crates.io, NuGet, GitHub releases).

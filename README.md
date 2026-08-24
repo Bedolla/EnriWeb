@@ -161,14 +161,15 @@ Inputs:
 
 - `url` (`string`, required unless `cursor` is provided): full URL (`http://` or `https://`).
 - `cursor` (`string`, optional): opaque cursor returned by a previous `web_fetch` call.
-- `offset` (`number`, optional, default: `0`): cursor read offset in characters.
-- `limit` (`number`, optional): cursor read limit in characters (default: `max_chars`).
+- `offset_chars` (`number`, optional, default: `0`): cursor read offset in characters (`offset` is a legacy alias).
+- `limit_chars` (`number`, optional): cursor read limit in characters (default: `max_chars`; `limit` is a legacy alias).
 - `prompt` (`string`, optional): extraction hint (what to focus on).
 - `max_chars` (`number`, optional): maximum content length (default: `ENRIWEB_WEB_FETCH_DEFAULT_MAX_CHARS`).
+- `format` (`string`, optional): content flavor for HTML pages — `"text"` (default, lightweight structured text) or `"markdown"` (full markdown with links, emphasis, code fences, and images). Use markdown only when the exact page structure matters; text is cheaper for factual lookups.
 
 Notes:
 
-- If the response includes a `cursor`, you can page through the captured content by calling `web_fetch` again with `cursor` + `offset` + `limit`.
+- If the response includes a `cursor`, you can page through the captured content by calling `web_fetch` again with `cursor` + `offset_chars` + `limit_chars`.
 
 Example `arguments` object:
 

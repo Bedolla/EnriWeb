@@ -155,14 +155,14 @@ export class WebSearchTool {
     const searchPrompt = optionalString(obj["search_prompt"]);
 
     if (maxResults !== undefined && maxResults < 1) {
-      throw new Error("max_results must be at least 1.");
+      throw new Error("max_results debe ser al menos 1.");
     }
 
     let recency: WebSearchToolParams["recency"];
     if (recencyRaw) {
       const candidate = recencyRaw as (typeof RECENCY_VALUES)[number];
       if (!RECENCY_VALUES.includes(candidate)) {
-        throw new Error("recency must be one of: oneDay, oneWeek, oneMonth, oneYear, noLimit.");
+        throw new Error("recency debe ser uno de: oneDay, oneWeek, oneMonth, oneYear, noLimit.");
       }
       recency = candidate;
     }
@@ -217,16 +217,16 @@ export class WebSearchTool {
    * @returns Formatted text
    */
   public formatOutput(result: WebSearchToolResult): string {
-    const header = `SEARCH RESULTS (${result.count} found):\n\n`;
+    const header = `RESULTADOS DE BÚSQUEDA (${result.count} encontrados):\n\n`;
     if (!Array.isArray(result.results) || result.results.length === 0) {
-      return `${header}No results found.`;
+      return `${header}No se encontraron resultados.`;
     }
 
     const lines = result.results.map((entry, index) => {
-      const title = entry.title && entry.title.trim() ? entry.title.trim() : "(Untitled)";
+      const title = entry.title && entry.title.trim() ? entry.title.trim() : "(Sin título)";
       const snippet =
-        entry.snippet && entry.snippet.trim() ? entry.snippet.trim() : "(No snippet)";
-      return `${index + 1}. ${title}\n   URL: ${entry.url}\n   Snippet: ${snippet}`;
+        entry.snippet && entry.snippet.trim() ? entry.snippet.trim() : "(Sin extracto)";
+      return `${index + 1}. ${title}\n   URL: ${entry.url}\n   Extracto: ${snippet}`;
     });
 
     return header + lines.join("\n\n");

@@ -2,6 +2,16 @@
 
 All notable changes to EnriWeb are documented in this file.
 
+## 2026-08-24
+### Added
+- `web_fetch` now exposes the per-call `format` argument (`"text"` default | `"markdown"`) matching the EnriProxy `/v1/tools/web_fetch` capability: MCP schema (Spanish description coaching when markdown pays off — links, emphasis, code fences, images — vs. the cheaper light text), tool parsing (unknown values fall back to omitted/default), and the client URL-mode payload sends `format` only when the caller chose a flavor. Tests: parse mapping (`format: "markdown"`), unknown-format fallback, client payload includes `format` when requested and omits it otherwise.
+### Changed
+- Every model-facing string is now Spanish, matching the monorepo convention: `web_search`/`web_fetch` tool descriptions and all parameter descriptions (schemas), tool validation errors (`web_fetch requiere 'url' o 'cursor'`, `max_chars debe ser positivo`, …), client HTTP errors (`La búsqueda web falló (HTTP …)`), the unknown-tool server error, and output headers (`RESULTADOS DE BÚSQUEDA (N encontrados)`, `Contenido obtenido de …`, `Vista previa (primeros N caracteres)`, npm enrichment labels `Descripción/Última versión/Licencia/Repositorio`). Internal field names and the wire contract with EnriProxy are unchanged.
+- README `web_fetch` inputs now document `offset_chars`/`limit_chars` as primary (legacy `offset`/`limit` kept as aliases) and the new `format` field; the pagination note references the current field names.
+### Testing
+- Ran: `npm test` (OK) - 4 files, 19 tests.
+- Ran: `npm run typecheck` and `npm run build` (OK).
+
 ## 2026-06-19
 ### Changed
 - Bumped package version to `0.1.1` for npm publishing.

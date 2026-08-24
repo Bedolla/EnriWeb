@@ -215,5 +215,39 @@ describe("EnriProxyClient request payloads", () => {
       prompt: "summarize",
       max_chars: 1234
     });
+    expect(recorded?.body).not.toHaveProperty("format");
+  });
+
+  it("sends the format field for webFetch when requested", async () => {
+    let recorded: RecordedRequest | null = null;
+    const started = await startServer(async (req, res) => {
+      const body = await readJsonBody(req);
+      recorded = {
+        url: req.url ?? "",
+        method: req.method ?? "",
+        headers: req.headers,
+        body
+      };
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ url: "https://example.com", content: "ok" }));
+    });
+    server = started.server;
+
+    const client = new EnriProxyClient({
+      baseUrl: started.baseUrl,
+      apiKey: "test-key",
+      timeoutMs: 1000
+    });
+
+    await client.webFetch({
+      url: "https://example.com/docs",
+      format: "markdown"
+    });
+
+    expect(recorded?.body).toMatchObject({
+      url: "https://example.com/docs",
+      format: "markdown"
+    });
   });
 });

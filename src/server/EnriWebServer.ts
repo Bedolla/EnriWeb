@@ -135,7 +135,7 @@ export class EnriWebServer {
 
         return {
           isError: true,
-          content: [{ type: "text", text: `Unknown tool: ${toolName}` }]
+          content: [{ type: "text", text: `Herramienta desconocida: ${toolName}` }]
         } satisfies CallToolResult;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -156,52 +156,52 @@ export class EnriWebServer {
     return {
       name: "web_search",
       description:
-        "Search the web via EnriProxy's multi-tier search service.\n" +
+        "Busca en la web mediante el servicio multi-nivel de EnriProxy.\n" +
         "\n" +
-        "When to use:\n" +
-        "- When you need to find current information, news, or documentation.\n" +
-        "- When searching for technical solutions, APIs, or code examples.\n" +
-        "- When you need to verify facts or find up-to-date sources.\n" +
+        "Cuándo usarla:\n" +
+        "- Cuando necesite información actual, noticias o documentación.\n" +
+        "- Cuando busque soluciones técnicas, APIs o ejemplos de código.\n" +
+        "- Cuando necesite verificar datos o encontrar fuentes actualizadas.\n" +
         "\n" +
-        "Features:\n" +
-        "- Automatic fallback across multiple search backends (details intentionally not exposed)\n" +
-        "- Automatic registry verification: enriches results with latest stable + prerelease versions when registry URLs are detected (npm, PyPI, crates.io, NuGet, GitHub)\n" +
-        "- Domain filtering (allowlist/blocklist)\n" +
-        "- Recency filtering (day/week/month/year)\n" +
+        "Características:\n" +
+        "- Respaldo automático entre múltiples backends de búsqueda (detalles omitidos intencionalmente)\n" +
+        "- Verificación automática de registros: enriquece los resultados con la última versión estable y prerelease cuando detecta URLs de registros (npm, PyPI, crates.io, NuGet, GitHub)\n" +
+        "- Filtrado por dominios (allowlist/blocklist)\n" +
+        "- Filtrado por recencia (día/semana/mes/año)\n" +
         "\n" +
-        "Notes:\n" +
-        "- Provide specific queries for best results.\n" +
-        "- Use recency filter for time-sensitive information.",
+        "Notas:\n" +
+        "- Use consultas específicas para obtener mejores resultados.\n" +
+        "- Use el filtro de recencia para información sensible al tiempo.",
       inputSchema: {
         type: "object",
         properties: {
           query: {
             type: "string",
-            description: "Search query. Be specific for better results."
+            description: "Consulta de búsqueda. Sea específico para obtener mejores resultados."
           },
           max_results: {
             type: "integer",
             description:
-              "Maximum results (>= 1). If omitted, EnriProxy uses its configured default. The upper limit is enforced server-side."
+              "Máximo de resultados (>= 1). Si se omite, EnriProxy usa su valor configurado por defecto. El límite superior se aplica en el servidor."
           },
           recency: {
             type: "string",
             enum: ["oneDay", "oneWeek", "oneMonth", "oneYear", "noLimit"],
-            description: "Filter by recency (default: noLimit)."
+            description: "Filtra por recencia (por defecto: noLimit)."
           },
           allowed_domains: {
             type: "array",
             items: { type: "string" },
-            description: "Only return results from these domains."
+            description: "Devuelve sólo resultados de estos dominios."
           },
           blocked_domains: {
             type: "array",
             items: { type: "string" },
-            description: "Exclude results from these domains."
+            description: "Excluye resultados de estos dominios."
           },
           search_prompt: {
             type: "string",
-            description: "Optional context to refine search intent."
+            description: "Contexto opcional para refinar la intención de búsqueda."
           }
         },
         required: ["query"]
@@ -219,63 +219,69 @@ export class EnriWebServer {
     return {
       name: "web_fetch",
       description:
-        "Fetch and read content from a URL via EnriProxy's multi-tier fetch service.\n" +
+        "Obtiene y lee el contenido de una URL mediante el servicio multi-nivel de EnriProxy.\n" +
         "\n" +
-        "When to use:\n" +
-        "- When you need to read the full content of a webpage.\n" +
-        "- When you need to access documentation, articles, or code files.\n" +
-        "- When simpler fetch methods fail due to anti-bot protection.\n" +
+        "Cuándo usarla:\n" +
+        "- Cuando necesite leer el contenido completo de una página web.\n" +
+        "- Cuando necesite acceder a documentación, artículos o archivos de código.\n" +
+        "- Cuando métodos de fetch más simples fallen por protección anti-bot.\n" +
         "\n" +
-        "Features:\n" +
-        "- Package registry API detection (npm, PyPI)\n" +
-        "- Raw file fetch (GitHub raw, HuggingFace)\n" +
-        "- Robust fetching for static, dynamic, and bot-protected sites (best-effort)\n" +
-        "- Automatic fallback across multiple retrieval strategies (details intentionally not exposed)\n" +
+        "Características:\n" +
+        "- Detección de APIs de registros de paquetes (npm, PyPI)\n" +
+        "- Fetch de archivos raw (GitHub raw, HuggingFace)\n" +
+        "- Fetch robusto para sitios estáticos, dinámicos y protegidos (best-effort)\n" +
+        "- Respaldo automático entre múltiples estrategias de recuperación (detalles omitidos intencionalmente)\n" +
         "\n" +
-        "Notes:\n" +
-        "- Provide the full URL including protocol (https://).\n" +
-        `- Content is limited by the \`max_chars\` parameter (default: ${defaultMaxChars}).\n` +
-        "- If the result is truncated and includes a `cursor`, call `web_fetch` again with `cursor` + `offset` + `limit` to read more without re-fetching.",
+        "Notas:\n" +
+        "- Proporcione la URL completa incluyendo protocolo (https://).\n" +
+        `- El contenido se limita con el parámetro \`max_chars\` (por defecto: ${defaultMaxChars}).\n` +
+        "- Si el resultado viene truncado e incluye un `cursor`, vuelva a llamar `web_fetch` con `cursor` + `offset_chars` + `limit_chars` para leer más sin volver a descargar.",
       inputSchema: {
         type: "object",
         properties: {
           url: {
             type: "string",
-            description: "Full URL to fetch (http:// or https://)."
+            description: "URL completa a obtener (http:// o https://)."
           },
           cursor: {
             type: "string",
             description:
-              "Opaque cursor returned by a previous `web_fetch` call for pagination."
+              "Cursor opaco devuelto por una llamada previa de `web_fetch` para paginación. Nunca invente este valor."
           },
           prompt: {
             type: "string",
             description:
-              "Optional hint describing what you want to extract (the tool returns fetched content; it does not generate an AI summary)."
+              "Pista opcional que describe qué desea extraer (la herramienta devuelve el contenido obtenido; no genera un resumen con IA)."
           },
           max_chars: {
             type: "integer",
-            description: `Maximum content length (default: ${defaultMaxChars}).`
+            description: `Longitud máxima del contenido (por defecto: ${defaultMaxChars}).`
+          },
+          format: {
+            type: "string",
+            enum: ["text", "markdown"],
+            description:
+              "Formato del contenido para páginas HTML. 'text' (por defecto) devuelve texto estructurado ligero y gasta menos tokens. Use 'markdown' cuando necesite reproducir la estructura exacta de la página: enlaces con URL, énfasis, bloques de código, listas anidadas o imágenes. Para preguntas puntuales (versiones, precios, datos sueltos) deje el formato por defecto."
           },
           offset: {
             type: "integer",
             description:
-              "Legacy alias for offset_chars. Cursor read offset in characters (default: 0)."
+              "Alias legado de offset_chars. Offset de lectura por cursor en caracteres (por defecto: 0)."
           },
           limit: {
             type: "integer",
             description:
-              "Legacy alias for limit_chars. Cursor read limit in characters (default: max_chars)."
+              "Alias legado de limit_chars. Límite de lectura por cursor en caracteres (por defecto: max_chars)."
           },
           offset_chars: {
             type: "integer",
             description:
-              "Cursor read offset in characters (default: 0). Prefer this current EnriProxy field name over offset."
+              "Offset de lectura por cursor en caracteres (por defecto: 0). Prefiera este nombre actual de campo de EnriProxy sobre offset."
           },
           limit_chars: {
             type: "integer",
             description:
-              "Cursor read limit in characters (default: max_chars). Prefer this current EnriProxy field name over limit."
+              "Límite de lectura por cursor en caracteres (por defecto: max_chars). Prefiera este nombre actual de campo de EnriProxy sobre limit."
           }
         },
         anyOf: [{ required: ["url"] }, { required: ["cursor"] }]

@@ -50,12 +50,32 @@ describe("WebFetchTool.parseParams", () => {
     const params = tool.parseParams({
       url: "https://example.com/docs",
       prompt: "summarize",
-      max_chars: "1234"
+      max_chars: "1234",
+      format: "markdown"
     });
 
     expect(params.url).toBe("https://example.com/docs");
     expect(params.prompt).toBe("summarize");
     expect(params.maxChars).toBe(1234);
+    expect(params.format).toBe("markdown");
+  });
+
+  it("defaults format to undefined and rejects unknown formats", () => {
+    const tool = new WebFetchTool({
+      createClient: () => {
+        throw new Error("not used");
+      },
+      defaultServerUrl: "http://127.0.0.1:8787",
+      defaultApiKey: "test",
+      defaultTimeoutMs: 1000,
+      defaultMaxChars: 80000
+    });
+
+    const plain = tool.parseParams({ url: "https://example.com" });
+    expect(plain.format).toBeUndefined();
+
+    const unknown = tool.parseParams({ url: "https://example.com", format: "html" });
+    expect(unknown.format).toBeUndefined();
   });
 
   it("rejects non-positive max_chars", () => {
@@ -188,7 +208,7 @@ describe("WebFetchTool.execute", () => {
 
     expect(result.content_type).toBe("text/markdown");
     expect(result.content).toContain("# chalk");
-    expect(result.content).toContain("Repository: https://github.com/chalk/chalk");
+    expect(result.content).toContain("Repositorio: https://github.com/chalk/chalk");
     expect(result.content).toContain("## README");
     expect(result.content).toContain("npm install chalk");
 

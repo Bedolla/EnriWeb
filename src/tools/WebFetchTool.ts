@@ -49,6 +49,11 @@ export interface WebFetchToolParams {
   readonly maxChars?: number;
 
   /**
+   * Content flavor for HTML sources: light text (default) or full markdown.
+   */
+  readonly format?: "text" | "markdown";
+
+  /**
    * Offset in characters for cursor pagination.
    */
   readonly offsetChars?: number;
@@ -216,28 +221,30 @@ export class WebFetchTool {
     const url = urlRaw?.trim() ? assertHttpUrl(urlRaw.trim(), "url") : undefined;
 
     if (!cursor && !url) {
-      throw new Error("web_fetch requires either 'url' or 'cursor'.");
+      throw new Error("web_fetch requiere 'url' o 'cursor'.");
     }
 
     const prompt = optionalString(obj["prompt"]);
     const maxChars = optionalInt(obj["max_chars"]);
+    const format: "text" | "markdown" | undefined =
+      obj["format"] === "markdown" ? "markdown" : obj["format"] === "text" ? "text" : undefined;
     const offsetCharsRaw = optionalInt(obj["offset_chars"]) ?? optionalInt(obj["offset"]);
     const limitCharsRaw = optionalInt(obj["limit_chars"]) ?? optionalInt(obj["limit"]);
 
     if (maxChars !== undefined && maxChars < 1) {
-      throw new Error("max_chars must be positive.");
+      throw new Error("max_chars debe ser positivo.");
     }
 
     const offsetChars = cursor ? offsetCharsRaw : undefined;
     let limitChars: number | undefined = cursor ? limitCharsRaw : undefined;
 
     if (offsetChars !== undefined && offsetChars < 0) {
-      throw new Error("offset must be non-negative.");
+      throw new Error("offset debe ser no negativo.");
     }
 
     if (limitChars !== undefined) {
       if (limitChars < 0) {
-        throw new Error("limit must be positive.");
+        throw new Error("limit debe ser positivo.");
       }
       if (limitChars === 0) {
         limitChars = undefined;
@@ -249,6 +256,7 @@ export class WebFetchTool {
       cursor,
       prompt,
       maxChars,
+      format,
       offsetChars,
       limitChars
     };
@@ -294,7 +302,7 @@ export class WebFetchTool {
     }
 
     if (!params.url) {
-      throw new Error("web_fetch requires a URL when cursor is not provided.");
+      throw new Error("web_fetch requiere una URL cuando no se proporciona cursor.");
     }
 
     const url: string = params.url;
@@ -312,11 +320,12 @@ export class WebFetchTool {
       return npmResult;
     }
 
-    const response = await client.webFetch({
-      url,
-      prompt: params.prompt,
-      maxChars: effectiveMaxChars
-    });
+      const response = await client.webFetch({
+        url,
+        prompt: params.prompt,
+        maxChars: effectiveMaxChars,
+        format: params.format
+      });
 
     return {
       content: response.content,
@@ -396,24 +405,24 @@ export class WebFetchTool {
     const lines: string[] = [];
     lines.push(`# ${name}`);
     lines.push("");
-    lines.push(`Requested URL: ${params.url}`);
+    lines.push(`URL solicitada: ${params.url}`);
     lines.push("");
     if (description) {
-      lines.push(`Description: ${description}`);
+      lines.push(`Descripción: ${description}`);
     }
     if (version) {
-      lines.push(`Latest version: ${version}`);
+      lines.push(`Última versión: ${version}`);
     }
     if (license) {
-      lines.push(`License: ${license}`);
+      lines.push(`Licencia: ${license}`);
     }
     if (homepageUrl) {
-      lines.push(`Homepage: ${homepageUrl}`);
+      lines.push(`Página principal: ${homepageUrl}`);
     }
     if (gitHubRepoUrl) {
-      lines.push(`Repository: ${gitHubRepoUrl}`);
+      lines.push(`Repositorio: ${gitHubRepoUrl}`);
     } else if (repositoryUrl) {
-      lines.push(`Repository: ${repositoryUrl}`);
+      lines.push(`Repositorio: ${repositoryUrl}`);
     }
 
     if (readmeText) {
@@ -641,14 +650,14 @@ export class WebFetchTool {
    * @returns Formatted text
    */
   public formatOutput(result: WebFetchToolResult): string {
-    const truncatedNote = result.truncated ? " [TRUNCATED]" : "";
+    const truncatedNote = result.truncated ? " [TRUNCADO]" : "";
     const previewChars = Math.min(DEFAULT_TEXT_PREVIEW_CHARS, result.content.length);
     const preview = result.content.slice(0, previewChars);
-    const header = `Fetched ${result.url} (${result.content_type}, ${result.content.length} chars)${truncatedNote}.`;
+    const header = `Contenido obtenido de ${result.url} (${result.content_type}, ${result.content.length} caracteres)${truncatedNote}.`;
     const previewNote =
       previewChars < result.content.length
-        ? `\n\nPreview (first ${previewChars} chars):\n\n`
-        : "\n\nContent:\n\n";
+        ? `\n\nVista previa (primeros ${previewChars} caracteres):\n\n`
+        : "\n\nContenido:\n\n";
 
     return header + previewNote + preview;
   }

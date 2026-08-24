@@ -124,6 +124,11 @@ export interface WebFetchUrlRequest {
    * Maximum content length in characters.
    */
   readonly maxChars?: number;
+
+  /**
+   * Content flavor for HTML sources: light text (default) or full markdown.
+   */
+  readonly format?: "text" | "markdown";
 }
 
 /**
@@ -347,7 +352,7 @@ export class EnriProxyClient {
     const result = await this.requestJson("POST", url, payload, this.timeoutMs);
     if (result.status < 200 || result.status >= 300) {
       throw new EnriProxyHttpError(
-        `Web search failed (HTTP ${result.status}).`,
+        `La búsqueda web falló (HTTP ${result.status}).`,
         result.status,
         result.headers,
         result.body
@@ -370,7 +375,7 @@ export class EnriProxyClient {
     if ("cursor" in params) {
       const cursor = params.cursor.trim();
       if (!cursor) {
-        throw new Error("webFetch requires a non-empty cursor.");
+        throw new Error("webFetch requiere un cursor no vacío.");
       }
       payload["cursor"] = cursor;
 
@@ -392,12 +397,15 @@ export class EnriProxyClient {
       if (typeof params.maxChars === "number") {
         payload["max_chars"] = params.maxChars;
       }
+      if (params.format === "markdown" || params.format === "text") {
+        payload["format"] = params.format;
+      }
     }
 
     const result = await this.requestJson("POST", url, payload, this.timeoutMs);
     if (result.status < 200 || result.status >= 300) {
       throw new EnriProxyHttpError(
-        `Web fetch failed (HTTP ${result.status}).`,
+        `El fetch web falló (HTTP ${result.status}).`,
         result.status,
         result.headers,
         result.body
@@ -480,7 +488,7 @@ export class EnriProxyClient {
           res.on("data", (chunk: Buffer) => {
             received += chunk.length;
             if (received > maxResponseBytes) {
-              req.destroy(new Error("Response exceeded maximum allowed size."));
+              req.destroy(new Error("La respuesta excedió el tamaño máximo permitido."));
               return;
             }
             chunks.push(chunk);
@@ -498,7 +506,7 @@ export class EnriProxyClient {
 
       req.on("error", (error) => reject(error));
       req.setTimeout(timeoutMs, () => {
-        req.destroy(new Error(`Request timed out after ${timeoutMs}ms`));
+        req.destroy(new Error(`La petición expiró después de ${timeoutMs}ms`));
       });
 
       if (body && body.length > 0) {

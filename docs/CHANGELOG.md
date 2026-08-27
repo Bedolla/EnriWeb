@@ -2,6 +2,10 @@
 
 All notable changes to EnriWeb are documented in this file.
 
+## 2026-08-26 (PDF routing hint)
+### Added
+- `web_fetch` MCP output now appends a conditional Spanish hint on PDF responses: when `content_type` is a PDF, the formatted output suggests handing the URL to the `analyze_media` tool of the MCP EnriVision when the client has it installed (multipass vision analysis for scanned pages, diagrams, tables, or long documents). Text responses stay hint-free. Coverage: formatOutput test asserting the EnriVision/analyze_media hint with the URL for PDFs and its absence for HTML.
+
 ## 2026-08-26
 ### Added
 - `web_fetch` now exposes the full HTML projection option set on parity with EnriCode and EnriProxy: `format` gains `"html"` (sanitized markup — scripts/styles stripped, tags intact — for DOM inspection: forms, data attributes, component structure); `content` (`"main"` article-only scope that drops nav/sidebars/cookie banners/footers, typically saving 60-80% of tokens, vs `"full"` default); `include_links` (appends the `ENLACES DE LA PÁGINA` inventory, up to 200 unique links — enables informed crawling and handing image URLs straight to URL-capable media analysis); `include_metadata` (appends the `METADATOS DE LA PÁGINA` block: language, author, published date, og:image); and `anchor` (section selector by element id or exact heading text, bounded by the next same-or-higher heading, with an honest Spanish fallback note returning the full document when the section is missing). All options are parsed with safe defaults, validated, and forwarded to EnriProxy's `/v1/tools/web_fetch`; the tool description coaches the model on when each option pays off. Server-side execution lives in EnriProxy's same-day sanitizer entry.

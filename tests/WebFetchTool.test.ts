@@ -133,6 +133,42 @@ describe("WebFetchTool.parseParams", () => {
     );
   });
 
+  it("appends the EnriVision hint for PDF responses and keeps text responses clean", () => {
+    const tool = new WebFetchTool({
+      createClient: () => {
+        throw new Error("not used");
+      },
+      defaultServerUrl: "http://127.0.0.1:8787",
+      defaultApiKey: "test",
+      defaultTimeoutMs: 1000,
+      defaultMaxChars: 80000
+    });
+
+    const pdfOutput = tool.formatOutput({
+      content: "Texto del PDF extraído.",
+      status: 200,
+      content_type: "application/pdf",
+      truncated: false,
+      url: "https://example.com/doc.pdf"
+    });
+
+    expect(pdfOutput).toContain("analyze_media");
+    expect(pdfOutput).toContain("EnriVision");
+    expect(pdfOutput).toContain("https://example.com/doc.pdf");
+    expect(pdfOutput).toContain("Texto del PDF extraído");
+
+    const textOutput = tool.formatOutput({
+      content: "Title: Docs",
+      status: 200,
+      content_type: "text/html",
+      truncated: false,
+      url: "https://example.com/docs"
+    });
+
+    expect(textOutput).not.toContain("analyze_media");
+    expect(textOutput).not.toContain("EnriVision");
+  });
+
   it("accepts limit=0 on URL fetch requests (treats as omitted)", () => {
     const tool = new WebFetchTool({
       createClient: () => {

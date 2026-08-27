@@ -692,7 +692,7 @@ export class WebFetchTool {
    * @param result - Tool result
    * @returns Formatted text
    */
-  public formatOutput(result: WebFetchToolResult): string {
+   public formatOutput(result: WebFetchToolResult): string {
     const truncatedNote = result.truncated ? " [TRUNCADO]" : "";
     const previewChars = Math.min(DEFAULT_TEXT_PREVIEW_CHARS, result.content.length);
     const preview = result.content.slice(0, previewChars);
@@ -701,7 +701,11 @@ export class WebFetchTool {
       previewChars < result.content.length
         ? `\n\nVista previa (primeros ${previewChars} caracteres):\n\n`
         : "\n\nContenido:\n\n";
+    const pdfNote =
+      String(result.content_type).toLowerCase().includes("pdf")
+        ? `\n\n[PDF: el texto anterior es extracción básica. Si dispone de la herramienta analyze_media (MCP EnriVision), pásela esta URL para análisis multipass con visión —páginas escaneadas, diagramas, tablas o documentos largos—: ${result.url}]`
+        : "";
 
-    return header + previewNote + preview;
+    return header + previewNote + preview + pdfNote;
   }
 }

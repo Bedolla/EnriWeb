@@ -126,9 +126,31 @@ export interface WebFetchUrlRequest {
   readonly maxChars?: number;
 
   /**
-   * Content flavor for HTML sources: light text (default) or full markdown.
+   * Content flavor for HTML sources: light text (default), full markdown, or
+   * sanitized markup for DOM inspection.
    */
-  readonly format?: "text" | "markdown";
+  readonly format?: "text" | "markdown" | "html";
+
+  /**
+   * Content scope for HTML sources: main content region only, or the full
+   * page (default).
+   */
+  readonly content?: "main" | "full";
+
+  /**
+   * Whether to append the page link inventory.
+   */
+  readonly includeLinks?: boolean;
+
+  /**
+   * Whether to append the extended metadata block.
+   */
+  readonly includeMetadata?: boolean;
+
+  /**
+   * Optional anchor selector restricting the projection to one section.
+   */
+  readonly anchor?: string;
 }
 
 /**
@@ -397,8 +419,20 @@ export class EnriProxyClient {
       if (typeof params.maxChars === "number") {
         payload["max_chars"] = params.maxChars;
       }
-      if (params.format === "markdown" || params.format === "text") {
+      if (params.format === "markdown" || params.format === "text" || params.format === "html") {
         payload["format"] = params.format;
+      }
+      if (params.content === "main" || params.content === "full") {
+        payload["content"] = params.content;
+      }
+      if (params.includeLinks === true) {
+        payload["include_links"] = true;
+      }
+      if (params.includeMetadata === true) {
+        payload["include_metadata"] = true;
+      }
+      if (typeof params.anchor === "string" && params.anchor.trim()) {
+        payload["anchor"] = params.anchor.trim().replace(/^#+/, "").slice(0, 300);
       }
     }
 

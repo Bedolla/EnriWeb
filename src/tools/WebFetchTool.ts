@@ -49,9 +49,31 @@ export interface WebFetchToolParams {
   readonly maxChars?: number;
 
   /**
-   * Content flavor for HTML sources: light text (default) or full markdown.
+   * Content flavor for HTML sources: light text (default), full markdown, or
+   * sanitized markup for DOM inspection.
    */
-  readonly format?: "text" | "markdown";
+  readonly format?: "text" | "markdown" | "html";
+
+  /**
+   * Content scope for HTML sources: main content region only, or the full
+   * page (default).
+   */
+  readonly content?: "main" | "full";
+
+  /**
+   * Whether to append the page link inventory.
+   */
+  readonly includeLinks?: boolean;
+
+  /**
+   * Whether to append the extended metadata block.
+   */
+  readonly includeMetadata?: boolean;
+
+  /**
+   * Optional anchor selector restricting the projection to one section.
+   */
+  readonly anchor?: string;
 
   /**
    * Offset in characters for cursor pagination.
@@ -226,8 +248,21 @@ export class WebFetchTool {
 
     const prompt = optionalString(obj["prompt"]);
     const maxChars = optionalInt(obj["max_chars"]);
-    const format: "text" | "markdown" | undefined =
-      obj["format"] === "markdown" ? "markdown" : obj["format"] === "text" ? "text" : undefined;
+    const format: "text" | "markdown" | "html" | undefined =
+      obj["format"] === "markdown"
+        ? "markdown"
+        : obj["format"] === "text"
+          ? "text"
+          : obj["format"] === "html"
+            ? "html"
+            : undefined;
+    const content: "main" | "full" | undefined =
+      obj["content"] === "main" ? "main" : obj["content"] === "full" ? "full" : undefined;
+    const includeLinks = obj["include_links"] === true || obj["includeLinks"] === true;
+    const includeMetadata = obj["include_metadata"] === true || obj["includeMetadata"] === true;
+    const anchorRaw = optionalString(obj["anchor"]);
+    const anchor =
+      anchorRaw && anchorRaw.trim() ? anchorRaw.trim().replace(/^#+/, "").slice(0, 300) : undefined;
     const offsetCharsRaw = optionalInt(obj["offset_chars"]) ?? optionalInt(obj["offset"]);
     const limitCharsRaw = optionalInt(obj["limit_chars"]) ?? optionalInt(obj["limit"]);
 
@@ -257,6 +292,10 @@ export class WebFetchTool {
       prompt,
       maxChars,
       format,
+      content,
+      includeLinks,
+      includeMetadata,
+      anchor,
       offsetChars,
       limitChars
     };
@@ -320,12 +359,16 @@ export class WebFetchTool {
       return npmResult;
     }
 
-      const response = await client.webFetch({
-        url,
-        prompt: params.prompt,
-        maxChars: effectiveMaxChars,
-        format: params.format
-      });
+    const response = await client.webFetch({
+      url,
+      prompt: params.prompt,
+      maxChars: effectiveMaxChars,
+      format: params.format,
+      content: params.content,
+      includeLinks: params.includeLinks === true,
+      includeMetadata: params.includeMetadata === true,
+      anchor: params.anchor
+    });
 
     return {
       content: response.content,

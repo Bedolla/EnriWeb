@@ -165,7 +165,11 @@ Inputs:
 - `limit_chars` (`number`, optional): cursor read limit in characters (default: `max_chars`; `limit` is a legacy alias).
 - `prompt` (`string`, optional): extraction hint (what to focus on).
 - `max_chars` (`number`, optional): maximum content length (default: `ENRIWEB_WEB_FETCH_DEFAULT_MAX_CHARS`).
-- `format` (`string`, optional): content flavor for HTML pages — `"text"` (default, lightweight structured text) or `"markdown"` (full markdown with links, emphasis, code fences, and images). Use markdown only when the exact page structure matters; text is cheaper for factual lookups.
+- `format` (`string`, optional): content flavor for HTML pages — `"text"` (default, lightweight structured text), `"markdown"` (full markdown with links, emphasis, code fences, images, and tables), or `"html"` (sanitized markup for DOM inspection — scripts/styles stripped, tags intact). Use markdown only when the exact page structure matters; text is cheaper for factual lookups.
+- `content` (`string`, optional): HTML scope — `"full"` (default, whole page) or `"main"` (article/main container only; drops nav, sidebars, cookie banners, and footers, typically saving 60-80% of tokens).
+- `include_links` (`boolean`, optional): append the `ENLACES DE LA PÁGINA` inventory with every unique link (label + URL, up to 200) — useful for informed crawling or handing image URLs to URL-capable media analysis tools.
+- `include_metadata` (`boolean`, optional): append the `METADATOS DE LA PÁGINA` block with language, author, published date, and `og:image`.
+- `anchor` (`string`, optional): section selector — element id (with or without `#`) or exact heading text; returns only that section up to the next same-or-higher heading. When the section is missing, the response says so and returns the full document.
 
 Notes:
 

@@ -74,8 +74,47 @@ describe("WebFetchTool.parseParams", () => {
     const plain = tool.parseParams({ url: "https://example.com" });
     expect(plain.format).toBeUndefined();
 
-    const unknown = tool.parseParams({ url: "https://example.com", format: "html" });
+    const unknown = tool.parseParams({ url: "https://example.com", format: "pdf" });
     expect(unknown.format).toBeUndefined();
+
+    const html = tool.parseParams({ url: "https://example.com", format: "html" });
+    expect(html.format).toBe("html");
+  });
+
+  it("maps projection fields with safe defaults", () => {
+    const tool = new WebFetchTool({
+      createClient: () => {
+        throw new Error("not used");
+      },
+      defaultServerUrl: "http://127.0.0.1:8787",
+      defaultApiKey: "test",
+      defaultTimeoutMs: 1000,
+      defaultMaxChars: 80000
+    });
+
+    const params = tool.parseParams({
+      url: "https://example.com/docs",
+      format: "markdown",
+      content: "main",
+      include_links: true,
+      include_metadata: true,
+      anchor: "#installation"
+    });
+
+    expect(params.format).toBe("markdown");
+    expect(params.content).toBe("main");
+    expect(params.includeLinks).toBe(true);
+    expect(params.includeMetadata).toBe(true);
+    expect(params.anchor).toBe("installation");
+
+    const defaults = tool.parseParams({ url: "https://example.com/docs" });
+    expect(defaults.content).toBeUndefined();
+    expect(defaults.includeLinks).toBe(false);
+    expect(defaults.includeMetadata).toBe(false);
+    expect(defaults.anchor).toBeUndefined();
+
+    const invalid = tool.parseParams({ url: "https://example.com/docs", content: "side" });
+    expect(invalid.content).toBeUndefined();
   });
 
   it("rejects non-positive max_chars", () => {

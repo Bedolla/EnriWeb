@@ -2,6 +2,13 @@
 
 All notable changes to EnriWeb are documented in this file.
 
+## 2026-08-26
+### Added
+- `web_fetch` now exposes the full HTML projection option set on parity with EnriCode and EnriProxy: `format` gains `"html"` (sanitized markup — scripts/styles stripped, tags intact — for DOM inspection: forms, data attributes, component structure); `content` (`"main"` article-only scope that drops nav/sidebars/cookie banners/footers, typically saving 60-80% of tokens, vs `"full"` default); `include_links` (appends the `ENLACES DE LA PÁGINA` inventory, up to 200 unique links — enables informed crawling and handing image URLs straight to URL-capable media analysis); `include_metadata` (appends the `METADATOS DE LA PÁGINA` block: language, author, published date, og:image); and `anchor` (section selector by element id or exact heading text, bounded by the next same-or-higher heading, with an honest Spanish fallback note returning the full document when the section is missing). All options are parsed with safe defaults, validated, and forwarded to EnriProxy's `/v1/tools/web_fetch`; the tool description coaches the model on when each option pays off. Server-side execution lives in EnriProxy's same-day sanitizer entry.
+### Testing
+- Ran: `npm test` (OK) - 4 files, 20 tests (updated the format test that previously rejected `"html"` as unknown, plus new projection-fields coverage: snake_case mapping, `#`-stripping on anchors, invalid enum rejection, and safe defaults).
+- Ran: `npx tsc -p tsconfig.json --noEmit` (OK).
+
 ## 2026-08-24
 ### Added
 - `web_fetch` now exposes the per-call `format` argument (`"text"` default | `"markdown"`) matching the EnriProxy `/v1/tools/web_fetch` capability: MCP schema (Spanish description coaching when markdown pays off — links, emphasis, code fences, images — vs. the cheaper light text), tool parsing (unknown values fall back to omitted/default), and the client URL-mode payload sends `format` only when the caller chose a flavor. Tests: parse mapping (`format: "markdown"`), unknown-format fallback, client payload includes `format` when requested and omits it otherwise.

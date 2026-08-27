@@ -231,6 +231,8 @@ export class EnriWebServer {
         "- Fetch de archivos raw (GitHub raw, HuggingFace)\n" +
         "- Fetch robusto para sitios estáticos, dinámicos y protegidos (best-effort)\n" +
         "- Respaldo automático entre múltiples estrategias de recuperación (detalles omitidos intencionalmente)\n" +
+        "- Proyección controlable: `format` ('text' ligero por defecto, 'markdown' estructura completa, 'html' DOM saneado), `content` ('main' elimina navegación/banners y conserva el artículo), `anchor` (lee sólo una sección por id o título de encabezado), `include_links` (inventario de enlaces de la página) e `include_metadata` (idioma/autor/fecha/imagen destacada)\n" +
+        "- Decodificación de páginas con encoding legado (windows-1252/ISO-8859-1) sin mojibake\n" +
         "\n" +
         "Notas:\n" +
         "- Proporcione la URL completa incluyendo protocolo (https://).\n" +
@@ -259,9 +261,30 @@ export class EnriWebServer {
           },
           format: {
             type: "string",
-            enum: ["text", "markdown"],
+            enum: ["text", "markdown", "html"],
             description:
-              "Formato del contenido para páginas HTML. 'text' (por defecto) devuelve texto estructurado ligero y gasta menos tokens. Use 'markdown' cuando necesite reproducir la estructura exacta de la página: enlaces con URL, énfasis, bloques de código, listas anidadas o imágenes. Para preguntas puntuales (versiones, precios, datos sueltos) deje el formato por defecto."
+              "Formato del contenido para páginas HTML. 'text' (por defecto) devuelve texto estructurado ligero y gasta menos tokens. 'markdown' reproduce la estructura exacta de la página: enlaces con URL, énfasis, bloques de código, listas anidadas, imágenes y tablas. 'html' devuelve el marcado HTML saneado (sin scripts/estilos) para inspeccionar el DOM: formularios, atributos data-*, estructura de componentes. Para preguntas puntuales (versiones, precios, datos sueltos) deje el formato por defecto."
+          },
+          content: {
+            type: "string",
+            enum: ["main", "full"],
+            description:
+              "Alcance del contenido HTML. 'full' (por defecto) devuelve toda la página, incluida navegación, encabezados y pie. Use 'main' para quedarse sólo con el contenido principal (contenedor article/main, sin menús, barras laterales, banners de cookies ni pies): ahorra típicamente 60-80% de tokens en artículos, documentación y blogs. Combine content='main' con format='markdown' para la lectura óptima de artículos largos."
+          },
+          include_links: {
+            type: "boolean",
+            description:
+              "Si es true, agrega al final un inventario ENLACES DE LA PÁGINA con todos los enlaces únicos (etiqueta y URL, hasta 200). Úselo para decidir a dónde navegar después (crawling informado), descargar documentos enlazados o pasar URLs de imágenes a una herramienta de análisis de media que acepte URLs http(s) directas."
+          },
+          include_metadata: {
+            type: "boolean",
+            description:
+              "Si es true, agrega al final un bloque METADATOS DE LA PÁGINA con idioma, autor, fecha de publicación e imagen destacada (og:image). Útil para citar fuentes o decidir frescura del contenido antes de gastar tokens en el fetch completo."
+          },
+          anchor: {
+            type: "string",
+            description:
+              "Selector de sección: id de un elemento (con o sin '#', ej. 'installation') o texto exacto de un encabezado (ej. 'Instalación'). Devuelve sólo esa sección hasta el siguiente encabezado del mismo nivel o superior. Mucho más barato que paginar con offset_chars a ciegas en documentos largos. Si la sección no existe, la respuesta lo indica y devuelve el documento completo."
           },
           offset: {
             type: "integer",

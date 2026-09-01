@@ -41,6 +41,13 @@ export interface WebSearchRequest {
   readonly query: string;
 
   /**
+   * Batched search queries (1-4 non-blank strings). When present the proxy
+   * executes every query concurrently and returns a merged, URL-deduplicated
+   * result list; `query` remains the fallback for older proxies.
+   */
+  readonly queries?: string[];
+
+  /**
    * Maximum number of results.
    */
   readonly maxResults?: number;
@@ -104,6 +111,16 @@ export interface WebSearchResponse {
    * Number of results returned.
    */
   readonly count: number;
+
+  /**
+   * Executed batched queries reported by the proxy, when the request used them.
+   */
+  readonly queries?: string[];
+
+  /**
+   * Queries whose execution failed while at least one other query succeeded.
+   */
+  readonly failed_queries?: string[];
 }
 
 /**
@@ -354,6 +371,10 @@ export class EnriProxyClient {
     const payload: Record<string, unknown> = {
       query: params.query
     };
+
+    if (Array.isArray(params.queries) && params.queries.length > 0) {
+      payload["queries"] = params.queries;
+    }
 
     if (typeof params.maxResults === "number") {
       payload["max_results"] = params.maxResults;

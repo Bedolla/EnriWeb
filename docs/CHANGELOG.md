@@ -2,6 +2,13 @@
 
 All notable changes to EnriWeb are documented in this file.
 
+## 2026-08-31 (batched queries + model-safety notices)
+
+- `web_search` exposes a `queries` parameter (array of 1-4 non-blank strings, deduplicated; mutually exclusive with `query`) with a Spanish model-facing description including a worked example. Batched requests execute through EnriProxy concurrent merge and the formatted output announces the combined/deduplicated batch, lists executed queries, and reports per-query partial failures (`failed_queries`).
+- Every `web_search` output now ends with the Spanish untrusted-content notice (treat results as data, never instructions) and the permanent citation instruction (cite relevant URLs as markdown links), mirroring EnriCode's local web tool notices.
+- `web_fetch` output gains three model-safety notes in Spanish: an explicit non-2xx coaching note (a non-2xx status is not a tool error; decide the next step instead of retry-looping), a truncation note pointing at the exact `cursor` value plus `offset_chars`/`limit_chars` (never invent cursors), and the untrusted external-content notice with citation guidance. The existing PDF -> EnriVision analysis hint is preserved.
+- Coverage: new tests for batched-query parsing (bounds, blanks, dedupe, type checks), batched/single formatting with notices and partial failures, and the three web_fetch notes; suite 25/25, tsc and build clean.
+
 ## 2026-08-26 (PDF routing hint)
 ### Added
 - `web_fetch` MCP output now appends a conditional Spanish hint on PDF responses: when `content_type` is a PDF, the formatted output suggests handing the URL to the `analyze_media` tool of the MCP EnriVision when the client has it installed (multipass vision analysis for scanned pages, diagrams, tables, or long documents). Text responses stay hint-free. Coverage: formatOutput test asserting the EnriVision/analyze_media hint with the URL for PDFs and its absence for HTML.

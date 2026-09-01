@@ -1,6 +1,6 @@
 {
   "name": "@bedolla/enriweb",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "MCP server that provides web search and URL fetching via EnriProxy.",
   "keywords": [
     "mcp",

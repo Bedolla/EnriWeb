@@ -25,5 +25,5 @@ Last Updated: 2026-08-26
 - MCP tool schemas no longer expose per-call `server_url` or `api_key` overrides.
 
 ## Testing
-- Ran: `npm test` (OK) - 4 files, 17 tests.
+- Ran: `npm test` (OK) - 4 files, 25 tests.
 - Ran: `npm run build` (OK).

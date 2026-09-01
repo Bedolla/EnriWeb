@@ -169,6 +169,51 @@ describe("WebFetchTool.parseParams", () => {
     expect(textOutput).not.toContain("EnriVision");
   });
 
+  it("appends non-2xx coaching, cursor hints, and the untrusted note where applicable", () => {
+    const tool = new WebFetchTool({
+      createClient: () => {
+        throw new Error("not used");
+      },
+      defaultServerUrl: "http://127.0.0.1:8787",
+      defaultApiKey: "test",
+      defaultTimeoutMs: 1000,
+      defaultMaxChars: 80000
+    });
+
+    const notFoundOutput = tool.formatOutput({
+      content: "Recurso ausente.",
+      status: 404,
+      content_type: "text/html",
+      truncated: false,
+      url: "https://example.com/missing"
+    });
+    expect(notFoundOutput).toContain("HTTP 404");
+    expect(notFoundOutput).toContain("NO es error de la herramienta");
+    expect(notFoundOutput).not.toContain("cursor=");
+
+    const truncatedOutput = tool.formatOutput({
+      content: "a".repeat(3000),
+      status: 200,
+      content_type: "text/html",
+      truncated: true,
+      url: "https://example.com/long",
+      cursor: "cur-123"
+    });
+    expect(truncatedOutput).toContain('cursor="cur-123"');
+    expect(truncatedOutput).toContain("No invente valores de cursor");
+
+    const successOutput = tool.formatOutput({
+      content: "Título: Docs",
+      status: 200,
+      content_type: "text/html",
+      truncated: false,
+      url: "https://example.com/docs"
+    });
+    expect(successOutput).toContain("datos no confiables");
+    expect(successOutput).toContain("Cite esta URL");
+    expect(successOutput).not.toContain("HTTP 200");
+  });
+
   it("accepts limit=0 on URL fetch requests (treats as omitted)", () => {
     const tool = new WebFetchTool({
       createClient: () => {

@@ -87,19 +87,19 @@ async function main(): Promise<void> {
   if (args[0] === "--help" || args[0] === "-h" || args[0] === "help") {
     console.log("EnriWeb");
     console.log("");
-    console.log("This is an MCP server over stdio that provides web search and URL fetching via EnriProxy.");
+    console.log("Servidor MCP por stdio que provee búsqueda web y lectura de URLs vía EnriProxy.");
     console.log("");
-    console.log("Usage:");
-    console.log("  enriweb              (start MCP server over stdio)");
+    console.log("Uso:");
+    console.log("  enriweb              (inicia el servidor MCP por stdio)");
     console.log("  enriweb --version");
     console.log("  enriweb --help");
     console.log("");
-    console.log("Environment variables:");
-    console.log("  ENRIPROXY_URL (optional, default: http://127.0.0.1:8787)");
-    console.log("  ENRIPROXY_API_KEY (required)");
-    console.log("  ENRIWEB_TIMEOUT_MS (optional, default: 60000)");
-    console.log("  ENRIWEB_WEB_FETCH_DEFAULT_MAX_CHARS (optional, default: 200000)");
-    console.log("  ENRIWEB_GITHUB_TOKEN (optional, improves GitHub API rate limits)");
+    console.log("Variables de entorno:");
+    console.log("  ENRIPROXY_URL (opcional, default: http://127.0.0.1:8787)");
+    console.log("  ENRIPROXY_API_KEY (requerida)");
+    console.log("  ENRIWEB_TIMEOUT_MS (opcional, default: 60000)");
+    console.log("  ENRIWEB_WEB_FETCH_DEFAULT_MAX_CHARS (opcional, default: 200000)");
+    console.log("  ENRIWEB_GITHUB_TOKEN (opcional, mejora los límites de la API de GitHub)");
     process.exit(0);
   }
 

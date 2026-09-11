@@ -7,6 +7,7 @@
  */
 import type {
   EnriProxyClient,
+  WebSearchFetchedContentEntry,
   WebSearchResultEntry
 } from "../client/EnriProxyClient.js";
 import type { VerifiedRegistryEntity } from "./WebSearchRegistryVerifier.js";
@@ -111,6 +112,11 @@ export interface WebSearchToolResult extends Record<string, unknown> {
    * Queries that failed while at least one other query succeeded.
    */
   readonly failedQueries?: string[];
+
+  /**
+   * Verified page contents for the top results.
+   */
+  readonly fetchedContents?: WebSearchFetchedContentEntry[];
 
   /**
    * Optional verified registry data derived from canonical sources.
@@ -253,27 +259,29 @@ export class WebSearchTool {
    * Executes the web search tool.
    *
    * @param params - Validated parameters
+   * @param signal - Optional caller abort signal
    * @returns Tool result
    */
-  public async execute(params: WebSearchToolParams): Promise<WebSearchToolResult> {
+  public async execute(params: WebSearchToolParams, signal?: AbortSignal): Promise<WebSearchToolResult> {
     const serverUrl = assertHttpUrl(this.deps.defaultServerUrl, "ENRIPROXY_URL");
     const apiKey = assertNonEmptyString(this.deps.defaultApiKey, "ENRIPROXY_API_KEY");
 
     const client = this.deps.createClient(serverUrl, apiKey, this.deps.defaultTimeoutMs);
 
-    const response = await client.webSearch({
-      query: params.query,
-      queries: params.queries,
-      maxResults: params.maxResults,
-      recency: params.recency,
-      allowedDomains: params.allowedDomains,
-      blockedDomains: params.blockedDomains,
-      searchPrompt: params.searchPrompt
-    });
-
-    const verified = await this.deps.registryVerifier.verifyFromSearchResults(
-      response.results
+    const response = await client.webSearch(
+      {
+        query: params.query,
+        queries: params.queries,
+        maxResults: params.maxResults,
+        recency: params.recency,
+        allowedDomains: params.allowedDomains,
+        blockedDomains: params.blockedDomains,
+        searchPrompt: params.searchPrompt
+      },
+      signal
     );
+
+    const verified = await this.deps.registryVerifier.verifyFromSearchResults(response.results, signal);
 
     return {
       query: params.query,
@@ -281,6 +289,7 @@ export class WebSearchTool {
       results: response.results,
       count: response.count,
       failedQueries: response.failed_queries,
+      fetchedContents: response.fetched_contents,
       verified: verified.length > 0 ? verified : undefined
     };
   }
@@ -318,6 +327,12 @@ export class WebSearchTool {
           .map((query) => `"${query}"`)
           .join(", ")}.`
       );
+    }
+    if (result.fetchedContents && result.fetchedContents.length > 0) {
+      const contents = result.fetchedContents
+        .map((entry) => `[Fuente: ${entry.title}]\n[URL: ${entry.url}]\n\n${entry.content}`)
+        .join("\n\n---\n\n");
+      sections.push(`CONTENIDOS DE PÁGINA VERIFICADOS (${result.fetchedContents.length}):\n\n${contents}`);
     }
     sections.push(UNTRUSTED_CONTENT_NOTICE);
     sections.push(CITE_URLS_INSTRUCTION);

@@ -14,7 +14,7 @@
  */
 export function assertObject(value: unknown, name: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${name} must be an object.`);
+    throw new Error(`${name} debe ser un objeto.`);
   }
   return value as Record<string, unknown>;
 }
@@ -29,11 +29,11 @@ export function assertObject(value: unknown, name: string): Record<string, unkno
  */
 export function assertNonEmptyString(value: unknown, name: string): string {
   if (typeof value !== "string") {
-    throw new Error(`${name} must be a string.`);
+    throw new Error(`${name} debe ser una cadena.`);
   }
   const trimmed = value.trim();
   if (!trimmed) {
-    throw new Error(`${name} must be a non-empty string.`);
+    throw new Error(`${name} debe ser una cadena no vacía.`);
   }
   return trimmed;
 }
@@ -51,11 +51,11 @@ export function assertHttpUrl(value: unknown, name: string): string {
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      throw new Error(`${name} must be an HTTP or HTTPS URL.`);
+      throw new Error(`${name} debe ser una URL HTTP o HTTPS.`);
     }
     return parsed.toString();
   } catch {
-    throw new Error(`${name} must be a valid URL.`);
+    throw new Error(`${name} debe ser una URL válida.`);
   }
 }
 
@@ -81,10 +81,17 @@ export function optionalString(value: unknown): string | undefined {
  */
 export function optionalInt(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) {
+    if (!Number.isInteger(value)) {
+      return undefined;
+    }
     return Math.floor(value);
   }
   if (typeof value === "string" && value.trim()) {
-    const parsed = Number.parseInt(value, 10);
+    const trimmed: string = value.trim();
+    if (!/^-?\d+$/u.test(trimmed)) {
+      return undefined;
+    }
+    const parsed = Number.parseInt(trimmed, 10);
     if (Number.isFinite(parsed)) {
       return parsed;
     }
@@ -99,18 +106,22 @@ export function optionalInt(value: unknown): number | undefined {
  * @returns String array or undefined
  */
 export function optionalStringArray(value: unknown): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
   if (!Array.isArray(value)) {
     return undefined;
   }
   const collected: string[] = [];
   for (const entry of value) {
     if (typeof entry !== "string") {
-      continue;
+      throw new Error("Los filtros de dominios deben ser cadenas no vacías.");
     }
     const trimmed = entry.trim();
-    if (trimmed) {
-      collected.push(trimmed);
+    if (!trimmed) {
+      throw new Error("Los filtros de dominios deben ser cadenas no vacías.");
     }
+    collected.push(trimmed);
   }
   return collected.length > 0 ? collected : undefined;
 }

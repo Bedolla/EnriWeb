@@ -114,6 +114,21 @@ describe("EnriProxyClient error handling", () => {
       EnriProxyHttpError
     );
   });
+
+  it("rejects immediately when the caller signal is already aborted", async () => {
+    const client = new EnriProxyClient({
+      baseUrl: "http://127.0.0.1:1",
+      apiKey: "test",
+      timeoutMs: 1000
+    });
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(client.webSearch({ query: "test" }, controller.signal)).rejects.toThrow(/cancelada/i);
+    await expect(client.webFetch({ url: "https://example.com" }, controller.signal)).rejects.toThrow(
+      /cancelada/i
+    );
+  });
 });
 
 describe("EnriProxyClient request payloads", () => {

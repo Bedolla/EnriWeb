@@ -7,7 +7,11 @@ const createJsonResponse = (data: unknown): Response => {
   return {
     ok: true,
     status: 200,
-    json: async () => data
+    headers: {
+      get: (_name: string): string | null => null
+    },
+    json: async () => data,
+    text: async () => JSON.stringify(data)
   } as unknown as Response;
 };
 
@@ -119,6 +123,65 @@ describe("WebSearchRegistryVerifier", () => {
     expect(verified[0]?.latest_prerelease?.published_at).toBe(
       "2026-01-11T00:00:00Z"
     );
+  });
+
+  it("reports oversized registry payloads in Spanish instead of parsing them", async () => {
+    const results: WebSearchResultEntry[] = [
+      {
+        url: "https://www.npmjs.com/package/huge",
+        title: "huge - npm",
+        snippet: "Huge package"
+      }
+    ];
+
+    const fetchImpl = async (): Promise<Response> => {
+      return {
+        ok: true,
+        status: 200,
+        headers: {
+          get: (name: string): string | null =>
+            name.toLowerCase() === "content-length" ? "99999999" : "application/json"
+        },
+        json: async () => ({}),
+        text: async () => "{}"
+      } as unknown as Response;
+    };
+
+    const verifier = new WebSearchRegistryVerifier({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      timeoutMs: 5000,
+      cacheTtlMs: 60_000,
+      maxEntitiesPerCall: 5
+    });
+
+    const verified = await verifier.verifyFromSearchResults(results);
+    expect(verified.length).toBe(1);
+    expect(verified[0]?.status).toBe("error");
+    expect(verified[0]?.error).toContain("excede el máximo");
+  });
+
+  it("returns no verifications when the caller signal is already aborted", async () => {
+    let calls = 0;
+    const fetchImpl = async (): Promise<Response> => {
+      calls += 1;
+      return createJsonResponse({});
+    };
+
+    const verifier = new WebSearchRegistryVerifier({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      timeoutMs: 5000,
+      cacheTtlMs: 60_000,
+      maxEntitiesPerCall: 5
+    });
+
+    const controller = new AbortController();
+    controller.abort();
+    const verified = await verifier.verifyFromSearchResults(
+      [{ url: "https://www.npmjs.com/package/nuxt", title: "nuxt", snippet: "s" }],
+      controller.signal
+    );
+    expect(verified).toEqual([]);
+    expect(calls).toBe(0);
   });
 });
 

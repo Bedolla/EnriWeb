@@ -99,6 +99,31 @@ export interface WebSearchResultEntry {
 }
 
 /**
+ * One verified page content attached to a web search response.
+ */
+export interface WebSearchFetchedContentEntry {
+  /**
+   * URL that was fetched.
+   */
+  readonly url: string;
+
+  /**
+   * Result title at fetch time.
+   */
+  readonly title: string;
+
+  /**
+   * Extracted page content (truncated to the server budget).
+   */
+  readonly content: string;
+
+  /**
+   * Whether the content was truncated to the server budget.
+   */
+  readonly truncated: boolean;
+}
+
+/**
  * Web search response.
  */
 export interface WebSearchResponse {
@@ -121,6 +146,17 @@ export interface WebSearchResponse {
    * Queries whose execution failed while at least one other query succeeded.
    */
   readonly failed_queries?: string[];
+
+  /**
+   * Verified page contents for the top results, when server-side
+   * auto-fetch is enabled.
+   */
+  readonly fetched_contents?: WebSearchFetchedContentEntry[];
+
+  /**
+   * Number of verified page contents attached to the response.
+   */
+  readonly fetched_count?: number;
 }
 
 /**
@@ -364,9 +400,10 @@ export class EnriProxyClient {
    * Executes a web search via EnriProxy.
    *
    * @param params - Search parameters
+   * @param signal - Optional caller abort signal
    * @returns Search response
    */
-  public async webSearch(params: WebSearchRequest): Promise<WebSearchResponse> {
+  public async webSearch(params: WebSearchRequest, signal?: AbortSignal): Promise<WebSearchResponse> {
     const url = this.buildUrl("/v1/tools/web_search");
     const payload: Record<string, unknown> = {
       query: params.query
@@ -392,26 +429,33 @@ export class EnriProxyClient {
       payload["search_prompt"] = params.searchPrompt.trim();
     }
 
-    const result = await this.requestJson("POST", url, payload, this.timeoutMs);
+    const result = await this.requestJson("POST", url, payload, this.timeoutMs, signal);
     if (result.status < 200 || result.status >= 300) {
       throw new EnriProxyHttpError(
         `La búsqueda web falló (HTTP ${result.status}).`,
         result.status,
         result.headers,
-        result.body
+        result.body.slice(0, 4000)
       );
     }
 
-    return JSON.parse(result.body) as WebSearchResponse;
+    try {
+      return JSON.parse(result.body) as WebSearchResponse;
+    } catch (error) {
+      throw new Error(
+        `Respuesta no JSON de EnriProxy en /v1/tools/web_search (HTTP ${String(result.status)}): ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }
 
   /**
    * Executes a web fetch via EnriProxy.
    *
    * @param params - Fetch parameters
+   * @param signal - Optional caller abort signal
    * @returns Fetch response
    */
-  public async webFetch(params: WebFetchRequest): Promise<WebFetchResponse> {
+  public async webFetch(params: WebFetchRequest, signal?: AbortSignal): Promise<WebFetchResponse> {
     const url = this.buildUrl("/v1/tools/web_fetch");
     const payload: Record<string, unknown> = {};
 
@@ -449,25 +493,37 @@ export class EnriProxyClient {
       if (params.includeLinks === true) {
         payload["include_links"] = true;
       }
+      if (params.includeLinks === false) {
+        payload["include_links"] = false;
+      }
       if (params.includeMetadata === true) {
         payload["include_metadata"] = true;
+      }
+      if (params.includeMetadata === false) {
+        payload["include_metadata"] = false;
       }
       if (typeof params.anchor === "string" && params.anchor.trim()) {
         payload["anchor"] = params.anchor.trim().replace(/^#+/, "").slice(0, 300);
       }
     }
 
-    const result = await this.requestJson("POST", url, payload, this.timeoutMs);
+    const result = await this.requestJson("POST", url, payload, this.timeoutMs, signal);
     if (result.status < 200 || result.status >= 300) {
       throw new EnriProxyHttpError(
         `El fetch web falló (HTTP ${result.status}).`,
         result.status,
         result.headers,
-        result.body
+        result.body.slice(0, 4000)
       );
     }
 
-    return JSON.parse(result.body) as WebFetchResponse;
+    try {
+      return JSON.parse(result.body) as WebFetchResponse;
+    } catch (error) {
+      throw new Error(
+        `Respuesta no JSON de EnriProxy en /v1/tools/web_fetch (HTTP ${String(result.status)}): ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }
 
   /**
@@ -477,7 +533,13 @@ export class EnriProxyClient {
    * @returns URL instance
    */
   private buildUrl(pathname: string): URL {
-    return new URL(pathname, this.baseUrl);
+    const base: URL = new URL(this.baseUrl);
+    const basePath: string = base.pathname.replace(/\/+$/u, "");
+    const cleanPath: string = pathname.startsWith("/") ? pathname : `/${pathname}`;
+    base.pathname = `${basePath}${cleanPath}`.replace(/\/{2,}/gu, "/");
+    base.search = "";
+    base.hash = "";
+    return base;
   }
 
   /**
@@ -487,20 +549,22 @@ export class EnriProxyClient {
    * @param url - Target URL
    * @param jsonBody - JSON payload
    * @param timeoutMs - Timeout in milliseconds
+   * @param signal - Optional caller abort signal
    * @returns HTTP result
    */
   private async requestJson(
     method: "POST",
     url: URL,
     jsonBody: Record<string, unknown>,
-    timeoutMs: number
+    timeoutMs: number,
+    signal?: AbortSignal
   ): Promise<HttpResult> {
     const body = JSON.stringify(jsonBody);
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       "Content-Length": String(Buffer.byteLength(body))
     };
-    return this.requestRaw(method, url, headers, Buffer.from(body, "utf8"), timeoutMs);
+    return this.requestRaw(method, url, headers, Buffer.from(body, "utf8"), timeoutMs, signal);
   }
 
   /**
@@ -511,6 +575,7 @@ export class EnriProxyClient {
    * @param headers - Request headers
    * @param body - Request body
    * @param timeoutMs - Timeout in milliseconds
+   * @param signal - Optional caller abort signal (destroys the request on abort)
    * @returns HTTP result
    */
   private async requestRaw(
@@ -518,7 +583,8 @@ export class EnriProxyClient {
     url: URL,
     headers: Record<string, string> | undefined,
     body: Buffer | undefined,
-    timeoutMs: number
+    timeoutMs: number,
+    signal?: AbortSignal
   ): Promise<HttpResult> {
     const isHttps = url.protocol === "https:";
     const reqFn = isHttps ? httpsRequest : httpRequest;
@@ -529,6 +595,10 @@ export class EnriProxyClient {
     };
 
     return await new Promise<HttpResult>((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(new Error("La petición fue cancelada por el cliente."));
+        return;
+      }
       const req = reqFn(
         url,
         {
@@ -543,6 +613,7 @@ export class EnriProxyClient {
           res.on("data", (chunk: Buffer) => {
             received += chunk.length;
             if (received > maxResponseBytes) {
+              cleanupAbort();
               req.destroy(new Error("La respuesta excedió el tamaño máximo permitido."));
               return;
             }
@@ -550,6 +621,7 @@ export class EnriProxyClient {
           });
 
           res.on("end", () => {
+            cleanupAbort();
             resolve({
               status: res.statusCode ?? 0,
               headers: res.headers as Record<string, string | string[] | undefined>,
@@ -559,10 +631,28 @@ export class EnriProxyClient {
         }
       );
 
-      req.on("error", (error) => reject(error));
-      req.setTimeout(timeoutMs, () => {
+      const cleanupAbort = (): void => {
+        if (signal !== undefined) {
+          signal.removeEventListener("abort", onAbort);
+        }
+      };
+      const onAbort = (): void => {
+        req.destroy(new Error("La petición fue cancelada por el cliente."));
+      };
+      const onError = (error: Error): void => {
+        cleanupAbort();
+        reject(error);
+      };
+      const onTimeout = (): void => {
+        cleanupAbort();
         req.destroy(new Error(`La petición expiró después de ${timeoutMs}ms`));
-      });
+      };
+      if (signal !== undefined) {
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+
+      req.on("error", onError);
+      req.setTimeout(timeoutMs, onTimeout);
 
       if (body && body.length > 0) {
         req.write(body);

@@ -22,6 +22,22 @@ describe("WebFetchTool.parseParams", () => {
     expect(() => tool.parseParams({})).toThrow(/url|cursor/i);
   });
 
+  it("accepts UUID cursors and rejects invented cursor strings", () => {
+    const tool = new WebFetchTool({
+      createClient: () => {
+        throw new Error("not used");
+      },
+      defaultServerUrl: "http://127.0.0.1:8787",
+      defaultApiKey: "test",
+      defaultTimeoutMs: 1000,
+      defaultMaxChars: 80000
+    });
+
+    const uuid = "123e4567-e89b-12d3-a456-426614174000";
+    expect(tool.parseParams({ cursor: uuid }).cursor).toBe(uuid);
+    expect(() => tool.parseParams({ cursor: "cur-123" })).toThrow(/cursor/i);
+  });
+
   it("rejects non-http urls", () => {
     const tool = new WebFetchTool({
       createClient: () => {
@@ -74,8 +90,7 @@ describe("WebFetchTool.parseParams", () => {
     const plain = tool.parseParams({ url: "https://example.com" });
     expect(plain.format).toBeUndefined();
 
-    const unknown = tool.parseParams({ url: "https://example.com", format: "pdf" });
-    expect(unknown.format).toBeUndefined();
+    expect(() => tool.parseParams({ url: "https://example.com", format: "pdf" })).toThrow(/format/i);
 
     const html = tool.parseParams({ url: "https://example.com", format: "html" });
     expect(html.format).toBe("html");
@@ -109,12 +124,13 @@ describe("WebFetchTool.parseParams", () => {
 
     const defaults = tool.parseParams({ url: "https://example.com/docs" });
     expect(defaults.content).toBeUndefined();
-    expect(defaults.includeLinks).toBe(false);
-    expect(defaults.includeMetadata).toBe(false);
+    expect(defaults.includeLinks).toBeUndefined();
+    expect(defaults.includeMetadata).toBeUndefined();
     expect(defaults.anchor).toBeUndefined();
 
-    const invalid = tool.parseParams({ url: "https://example.com/docs", content: "side" });
-    expect(invalid.content).toBeUndefined();
+    expect(() => tool.parseParams({ url: "https://example.com/docs", content: "side" })).toThrow(
+      /content/i
+    );
   });
 
   it("rejects non-positive max_chars", () => {
@@ -214,7 +230,7 @@ describe("WebFetchTool.parseParams", () => {
     expect(successOutput).not.toContain("HTTP 200");
   });
 
-  it("accepts limit=0 on URL fetch requests (treats as omitted)", () => {
+  it("guides max_chars retry for truncated output without cursor and hints binary media", () => {
     const tool = new WebFetchTool({
       createClient: () => {
         throw new Error("not used");
@@ -225,20 +241,49 @@ describe("WebFetchTool.parseParams", () => {
       defaultMaxChars: 80000
     });
 
-    const params = tool.parseParams({
-      url: "https://example.com/docs",
-      offset: 0,
-      limit: 0
+    const noCursorOutput = tool.formatOutput({
+      content: "a".repeat(3000),
+      status: 200,
+      content_type: "text/html",
+      truncated: true,
+      url: "https://example.com/npm-pkg"
+    });
+    expect(noCursorOutput).toContain("max_chars");
+    expect(noCursorOutput).not.toContain("cursor=");
+
+    const imageOutput = tool.formatOutput({
+      content: "",
+      status: 200,
+      content_type: "image/png",
+      truncated: false,
+      url: "https://example.com/pic.png"
+    });
+    expect(imageOutput).toContain("analyze_media");
+  });
+
+  it("rejects offset/limit without cursor on URL fetch requests", () => {
+    const tool = new WebFetchTool({
+      createClient: () => {
+        throw new Error("not used");
+      },
+      defaultServerUrl: "http://127.0.0.1:8787",
+      defaultApiKey: "test",
+      defaultTimeoutMs: 1000,
+      defaultMaxChars: 80000
     });
 
-    expect(params.url).toBe("https://example.com/docs");
-    expect(params.offsetChars).toBeUndefined();
-    expect(params.limitChars).toBeUndefined();
+    expect(() =>
+      tool.parseParams({
+        url: "https://example.com/docs",
+        offset: 0,
+        limit: 0
+      })
+    ).toThrow(/cursor/i);
   });
 });
 
 describe("WebFetchTool.execute", () => {
-  it("uses defaultMaxChars when max_chars is not provided", async () => {
+  it("omits max_chars when not provided so the server default governs", async () => {
     const calls: WebFetchRequest[] = [];
 
     const tool = new WebFetchTool({
@@ -266,7 +311,7 @@ describe("WebFetchTool.execute", () => {
 
     expect(result.content).toBe("ok");
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.maxChars).toBe(80000);
+    expect(calls[0]?.maxChars).toBeUndefined();
   });
 
   it("resolves npm package pages to repository README when available", async () => {

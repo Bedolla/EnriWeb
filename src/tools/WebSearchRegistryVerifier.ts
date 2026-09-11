@@ -195,6 +195,16 @@ export class WebSearchRegistryVerifier {
   private static readonly DEFAULT_CONCURRENCY: number = 3;
 
   /**
+   * Maximum JSON payload accepted from a registry endpoint.
+   */
+  private static readonly MAX_JSON_BYTES: number = 5_000_000;
+
+  /**
+   * Maximum cached verification entries (LRU eviction beyond this count).
+   */
+  private static readonly MAX_CACHE_ENTRIES: number = 200;
+
+  /**
    * Dependencies.
    */
   private readonly deps: WebSearchRegistryVerifierDeps;
@@ -224,11 +234,16 @@ export class WebSearchRegistryVerifier {
    * Attempts to verify canonical versions for registry entities found in search results.
    *
    * @param results - Search results
+   * @param signal - Optional caller abort signal (stops queueing new verifications)
    * @returns Verified entities (best-effort)
    */
   public async verifyFromSearchResults(
-    results: WebSearchResultEntry[]
+    results: WebSearchResultEntry[],
+    signal?: AbortSignal
   ): Promise<VerifiedRegistryEntity[]> {
+    if (signal?.aborted) {
+      return [];
+    }
     const candidates = this.collectCandidates(results);
     if (candidates.length === 0) {
       return [];
@@ -236,6 +251,9 @@ export class WebSearchRegistryVerifier {
 
     const tasks = candidates.map(
       (candidate) => async (): Promise<VerifiedRegistryEntity> => {
+        if (signal?.aborted) {
+          throw new Error("Verificación cancelada por el cliente.");
+        }
         return await this.verifyCandidate(candidate.kind, candidate.name);
       }
     );
@@ -259,8 +277,11 @@ export class WebSearchRegistryVerifier {
     const candidates: Array<{ kind: VerifiedRegistryKind; name: string }> = [];
 
     for (const entry of results) {
-      if (!entry.url || candidates.length >= this.deps.maxEntitiesPerCall) {
+      if (candidates.length >= this.deps.maxEntitiesPerCall) {
         break;
+      }
+      if (!entry.url) {
+        continue;
       }
 
       let parsedUrl: URL;
@@ -361,6 +382,13 @@ export class WebSearchRegistryVerifier {
     }
 
     this.cache.set(cacheKey, { value, expiresAtMs: nowMs + this.deps.cacheTtlMs });
+    while (this.cache.size > WebSearchRegistryVerifier.MAX_CACHE_ENTRIES) {
+      const oldestKey: string | undefined = this.cache.keys().next().value;
+      if (oldestKey === undefined) {
+        break;
+      }
+      this.cache.delete(oldestKey);
+    }
     return value;
   }
 
@@ -411,7 +439,7 @@ export class WebSearchRegistryVerifier {
     const bodyRaw = await this.fetchJson(sourceUrl, { accept: "application/json" });
     const body = this.tryGetRecord(bodyRaw);
     if (!body) {
-      throw new Error(`Unexpected npm registry response for ${sourceUrl}`);
+      throw new Error(`Respuesta npm inesperada para ${sourceUrl}`);
     }
 
     const distTags = this.tryGetRecord(body["dist-tags"]);
@@ -465,7 +493,7 @@ export class WebSearchRegistryVerifier {
     const bodyRaw = await this.fetchJson(sourceUrl, { accept: "application/json" });
     const body = this.tryGetRecord(bodyRaw);
     if (!body) {
-      throw new Error(`Unexpected PyPI response for ${sourceUrl}`);
+      throw new Error(`Respuesta PyPI inesperada para ${sourceUrl}`);
     }
 
     const releases = this.tryGetRecord(body["releases"]);
@@ -509,7 +537,7 @@ export class WebSearchRegistryVerifier {
     const bodyRaw = await this.fetchJson(sourceUrl, { accept: "application/json" });
     const body = this.tryGetRecord(bodyRaw);
     if (!body) {
-      throw new Error(`Unexpected crates.io response for ${sourceUrl}`);
+      throw new Error(`Respuesta crates.io inesperada para ${sourceUrl}`);
     }
 
     const versions = Array.isArray(body["versions"]) ? body["versions"] : [];
@@ -579,7 +607,7 @@ export class WebSearchRegistryVerifier {
         kind: "nuget",
         name: packageId,
         status: "error",
-        error: "NuGet service index did not provide PackageBaseAddress."
+        error: "El índice de NuGet no proporcionó PackageBaseAddress."
       };
     }
 
@@ -587,7 +615,7 @@ export class WebSearchRegistryVerifier {
     const versionsBodyRaw = await this.fetchJson(versionsUrl, { accept: "application/json" });
     const versionsBody = this.tryGetRecord(versionsBodyRaw);
     if (!versionsBody) {
-      throw new Error(`Unexpected NuGet response for ${versionsUrl}`);
+      throw new Error(`Respuesta NuGet inesperada para ${versionsUrl}`);
     }
     const versions = Array.isArray(versionsBody["versions"]) ? versionsBody["versions"] : [];
     const versionStrings = versions
@@ -626,11 +654,12 @@ export class WebSearchRegistryVerifier {
    * @returns Verified registry entity
    */
   private async verifyGitHub(repoSlug: string): Promise<VerifiedRegistryEntity> {
-    const parts = repoSlug.split("/");
+    const cleanSlug: string = repoSlug.trim().replace(/\.git$/iu, "");
+    const parts = cleanSlug.split("/");
     const owner = parts[0];
     const repo = parts[1];
     if (!owner || !repo) {
-      return { kind: "github", name: repoSlug, status: "error", error: "Invalid repo slug." };
+      return { kind: "github", name: repoSlug, status: "error", error: "Repositorio inválido." };
     }
 
     const sourceUrl = `https://api.github.com/repos/${owner}/${repo}/releases?per_page=100`;
@@ -711,9 +740,27 @@ export class WebSearchRegistryVerifier {
         signal: controller.signal
       });
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status} for ${url}`);
+        throw new Error(`HTTP ${String(response.status)} para ${url}`);
       }
-      return await response.json();
+      const declaredLengthRaw: string | null = response.headers.get("content-length");
+      const declaredLength: number =
+        declaredLengthRaw !== null ? Number.parseInt(declaredLengthRaw, 10) : NaN;
+      if (Number.isFinite(declaredLength) && declaredLength > WebSearchRegistryVerifier.MAX_JSON_BYTES) {
+        throw new Error(
+          `La respuesta JSON de ${url} excede el máximo de ${String(WebSearchRegistryVerifier.MAX_JSON_BYTES)} bytes.`
+        );
+      }
+      const text: string = await response.text();
+      if (Buffer.byteLength(text, "utf8") > WebSearchRegistryVerifier.MAX_JSON_BYTES) {
+        throw new Error(
+          `La respuesta JSON de ${url} excede el máximo de ${String(WebSearchRegistryVerifier.MAX_JSON_BYTES)} bytes.`
+        );
+      }
+      try {
+        return JSON.parse(text) as unknown;
+      } catch {
+        throw new Error(`Respuesta no JSON del registro en ${url}.`);
+      }
     } finally {
       clearTimeout(timeout);
     }
@@ -833,10 +880,11 @@ export class WebSearchRegistryVerifier {
     }
 
     const owner = segments[0];
-    const repo = segments[1];
-    if (!owner || !repo) {
+    const repoRaw = segments[1];
+    if (!owner || !repoRaw) {
       return null;
     }
+    const repo: string = repoRaw.replace(/\.git$/iu, "");
 
     return `${owner}/${repo}`;
   }
@@ -1124,7 +1172,7 @@ export class WebSearchRegistryVerifier {
     });
     const body = this.tryGetRecord(bodyRaw);
     if (!body) {
-      throw new Error("Unexpected NuGet service index response.");
+      throw new Error("Respuesta inesperada del índice de NuGet.");
     }
     const resources = Array.isArray(body["resources"]) ? body["resources"] : [];
 

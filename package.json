@@ -1,7 +1,7 @@
 {
   "name": "@bedolla/enriweb",
-  "version": "0.1.6",
-  "description": "Servidor MCP que provee búsqueda web y lectura de URLs vía EnriProxy.",
+  "version": "0.1.7",
+  "description": "MCP server exposing web search and URL fetching tools backed by EnriProxy.",
   "keywords": [
     "mcp",
     "model-context-protocol",
@@ -45,6 +45,7 @@
   },
   "devDependencies": {
     "@types/node": "25.0.3",
+    "fast-check": "^4.10.0",
     "typescript": "5.9.3",
     "vitest": "4.0.16"
   },

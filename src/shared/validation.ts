@@ -47,16 +47,19 @@ export function assertNonEmptyString(value: unknown, name: string): string {
  * @throws Error if not a valid HTTP/HTTPS URL
  */
 export function assertHttpUrl(value: unknown, name: string): string {
-  const url = assertNonEmptyString(value, name);
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${name} debe ser una cadena no vacía.`);
+  }
+  let parsed: URL;
   try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      throw new Error(`${name} debe ser una URL HTTP o HTTPS.`);
-    }
-    return parsed.toString();
+    parsed = new URL(value.trim());
   } catch {
     throw new Error(`${name} debe ser una URL válida.`);
   }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`${name} debe ser una URL HTTP o HTTPS.`);
+  }
+  return parsed.toString();
 }
 
 /**
@@ -76,14 +79,15 @@ export function optionalString(value: unknown): string | undefined {
 /**
  * Returns integer or undefined.
  *
+ * @remarks
+ * Finite numbers floor (parity with EnriProxy/EnriCode); numeric strings
+ * must match fully (`"7"` ok, `"7.5"` dropped).
+ *
  * @param value - Value to check
  * @returns Integer or undefined
  */
 export function optionalInt(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) {
-    if (!Number.isInteger(value)) {
-      return undefined;
-    }
     return Math.floor(value);
   }
   if (typeof value === "string" && value.trim()) {
@@ -102,24 +106,33 @@ export function optionalInt(value: unknown): number | undefined {
 /**
  * Returns a list of trimmed strings or undefined.
  *
+ * @remarks
+ * A single string is normalized to a one-element list (parity with
+ * EnriProxy, which accepts `string | string[]` for domain filters). An
+ * invalid container (null, number, object) fails in Spanish, matching the
+ * proxy's 400 policy instead of being silently discarded.
+ *
  * @param value - Value to check
+ * @param name - Parameter name for error messages
  * @returns String array or undefined
+ * @throws Error when the container or an entry is not a string
  */
-export function optionalStringArray(value: unknown): string[] | undefined {
+export function optionalStringArray(value: unknown, name: string): string[] | undefined {
   if (value === undefined) {
     return undefined;
   }
-  if (!Array.isArray(value)) {
-    return undefined;
+  if (typeof value !== "string" && !Array.isArray(value)) {
+    throw new Error(`${name} debe ser un arreglo de strings.`);
   }
+  const items: unknown[] = Array.isArray(value) ? value : [value];
   const collected: string[] = [];
-  for (const entry of value) {
+  for (const entry of items) {
     if (typeof entry !== "string") {
       throw new Error("Los filtros de dominios deben ser cadenas no vacías.");
     }
     const trimmed = entry.trim();
     if (!trimmed) {
-      throw new Error("Los filtros de dominios deben ser cadenas no vacías.");
+      continue;
     }
     collected.push(trimmed);
   }

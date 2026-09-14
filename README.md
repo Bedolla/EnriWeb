@@ -11,7 +11,7 @@ If your MCP client can call MCP tools, it can do web search / fetch in a consist
 
 ## Requirements
 
-- Node.js `>= 22` (recommended: Node 24 LTS)
+- Node.js `>= 24` (Node 24 LTS)
 - A reachable EnriProxy server with:
   - `POST /v1/tools/web_search`
   - `POST /v1/tools/web_fetch`
@@ -98,9 +98,11 @@ EnriWeb is configured via environment variables:
 
 - `ENRIPROXY_URL` (`string`, optional, default: `http://127.0.0.1:8787`)
 - `ENRIPROXY_API_KEY` (`string`, required)
-- `ENRIWEB_TIMEOUT_MS` (`string`, optional, default: `60000`)
-  - Parsed as an integer (milliseconds).
-- `ENRIWEB_WEB_FETCH_DEFAULT_MAX_CHARS` (`string`, optional, default: `200000`)
+- `ENRIWEB_TIMEOUT_MS` (`string`, optional, default: `180000`)
+  - Parsed as an integer (milliseconds); fetch budget covering the proxy's total fetch budget (150 s) plus margin, matching EnriCode's remote fetch budget.
+- `ENRIWEB_SEARCH_TIMEOUT_MS` (`string`, optional, default: `320000`)
+  - Parsed as an integer (milliseconds); search budget covering the SearXNG engine budget plus server auto-fetch.
+- `ENRIWEB_WEB_FETCH_DEFAULT_MAX_CHARS` (`string`, optional, default: `200000`, max `4000000`)
   - Parsed as an integer.
 - `ENRIWEB_GITHUB_TOKEN` (`string`, optional)
   - Used for GitHub API enrichment to improve rate limits.
@@ -130,22 +132,33 @@ Search the web via EnriProxy.
 
 Inputs:
 
-- `query` (`string`, required): search query string.
-- `max_results` (`number`, optional)
+- `query` (`string` or `string[]`, required unless `queries` is provided): the search query. As an array it accepts a batch of 1 to 4 non-blank queries (each entry trimmed; duplicates collapse) — equivalent to sending `queries`.
+- `queries` (`string[]`, optional): batch of 1 to 4 queries. Takes precedence over `query`. EnriProxy runs every query in parallel, merges results by relevance rank, and deduplicates by URL.
+- `max_results` (`integer`, optional; alias `maxResults`)
   - Must be `>= 1`.
   - If omitted, EnriProxy uses its configured default.
-  - The upper limit is enforced server-side (EnriWeb does not hardcode a max).
+  - The upper limit is enforced server-side (values above the limit are clamped to it).
 - `recency` (`string`, optional, default: `noLimit`)
   - One of: `oneDay` | `oneWeek` | `oneMonth` | `oneYear` | `noLimit`
-- `allowed_domains` (`string[]`, optional): allowlist of domains to include.
-- `blocked_domains` (`string[]`, optional): blocklist of domains to exclude.
-- `search_prompt` (`string`, optional): extra context to refine the search intent.
+- `allowed_domains` (`string[]`, optional; alias `allowedDomains`): allowlist of domains to include.
+- `blocked_domains` (`string[]`, optional; alias `blockedDomains`): blocklist of domains to exclude.
+- `search_prompt` (`string`, optional; alias `searchPrompt`): extra context to refine the search intent. Capped at 2000 characters server-side (the excess is trimmed).
+
+Outputs (`structuredContent`):
+
+- `query` / `queries`: the executed query (or batch).
+- `results[]`: entries with `url`, `title`, `snippet`, and `published_at` when available.
+- `count`: number of returned results.
+- `perQuery[]`: for batched searches, `{ query, urls }` attribution groups so each result can be traced back to the query that found it.
+- `failedQueries[]`: queries that failed while at least one other succeeded (their section is absent from `perQuery`).
+- `fetchedContents[]` / `fetchedCount`: when server-side auto-fetch is enabled, the verified content of the top result pages (`url`, `title`, `content`, `truncated`). Read these before concluding information is missing.
+- `verified[]`: registry verification rows for npm / PyPI / crates.io / NuGet / GitHub URLs found in the results (`kind`, `name`, `latest_stable`, `latest_prerelease`, `status`, `error`).
 
 Example `arguments` object:
 
 ```jsonc
 {
-  "query": "qdrant docker compose autostart systemd",
+  "queries": ["qdrant docker compose autostart", "qdrant container restart policy"],
   "max_results": 10,
   "recency": "oneMonth"
 }
@@ -160,27 +173,42 @@ Fetch and read content from a URL via EnriProxy.
 Inputs:
 
 - `url` (`string`, required unless `cursor` is provided): full URL (`http://` or `https://`).
-- `cursor` (`string`, optional): opaque cursor returned by a previous `web_fetch` call.
-- `offset_chars` (`number`, optional, default: `0`): cursor read offset in characters (`offset` is a legacy alias).
-- `limit_chars` (`number`, optional): cursor read limit in characters (default: `max_chars`; `limit` is a legacy alias).
+- `cursor` (`string`, optional): opaque cursor returned by a previous `web_fetch` call. A valid cursor always wins over a coexisting `url`.
+- `action` (`"delete"`, optional): releases the server-side capture owned by `cursor`. Send with `cursor`; other parameters are ignored. Responds `{ deleted, cursor }`.
+- `ranges` (`array`, 1-10 items, optional): grouped `{ offset_chars, limit_chars }` windows read in one call. With `cursor`: each range is read server-side in parallel and the response is a grouped object (`range_applied`, `range_count`, `ranges[]`, `range_hint`). With `url`: the document is fetched first; if it arrives truncated with a cursor the ranges read that capture in parallel, otherwise they are sliced locally from the returned content.
+- `offset_chars` (`integer`, optional, default: `0`; aliases `offsetChars` and legacy `offset`): read offset in characters. With `cursor`: server-side window over the capture. With `url` (first read): local slice over the returned content, like EnriCode.
+- `limit_chars` (`integer`, optional, default: `max_chars`; aliases `limitChars` and legacy `limit`): read limit in characters. A value of `0` is ignored.
 - `prompt` (`string`, optional): extraction hint (what to focus on).
-- `max_chars` (`number`, optional): maximum content length (default: `ENRIWEB_WEB_FETCH_DEFAULT_MAX_CHARS`).
+- `max_chars` (`integer`, optional, default: `ENRIWEB_WEB_FETCH_DEFAULT_MAX_CHARS`; alias `maxChars`): maximum content length.
 - `format` (`string`, optional): content flavor for HTML pages — `"text"` (default, lightweight structured text), `"markdown"` (full markdown with links, emphasis, code fences, images, and tables), or `"html"` (sanitized markup for DOM inspection — scripts/styles stripped, tags intact). Use markdown only when the exact page structure matters; text is cheaper for factual lookups.
-- `content` (`string`, optional): HTML scope — `"full"` (default, whole page) or `"main"` (article/main container only; drops nav, sidebars, cookie banners, and footers, typically saving 60-80% of tokens).
-- `include_links` (`boolean`, optional): append the `ENLACES DE LA PÁGINA` inventory with every unique link (label + URL, up to 200) — useful for informed crawling or handing image URLs to URL-capable media analysis tools.
-- `include_metadata` (`boolean`, optional): append the `METADATOS DE LA PÁGINA` block with language, author, published date, and `og:image`.
+- `content` (`string`, optional): HTML scope — `"main"` (default, article/main container only; drops nav, sidebars, cookie banners, and footers, typically saving 60-80% of tokens) or `"full"` (whole page).
+- `include_links` (`boolean`, optional, default: `true`; alias `includeLinks`): append the `ENLACES DE LA PÁGINA` inventory with every unique link (label + URL, up to 200) — useful for informed crawling or handing image URLs to URL-capable media analysis tools. Send `false` to omit it.
+- `include_metadata` (`boolean`, optional, default `false`; alias `includeMetadata`): append the `METADATOS DE LA PÁGINA` block with language, author, published date, and `og:image`.
 - `anchor` (`string`, optional): section selector — element id (with or without `#`) or exact heading text; returns only that section up to the next same-or-higher heading. When the section is missing, the response says so and returns the full document.
+
+Outputs (`structuredContent`):
+
+- Single read: `content`, `status`, `content_type`, `truncated`, `url`, and pagination fields when present (`cursor`, `offset_chars`, `limit_chars`, `total_chars`, `has_more`, `next_offset_chars`, `reduced`, `fetched_truncated`, `applied_max_chars` on the npm path).
+- Delete: `deleted` (whether the cursor existed and was released) plus the addressed `cursor`.
+- Grouped ranges: `range_applied: true`, `range_count`, `ranges[]` (per-range `index`, offsets, `content`, `truncated`, Spanish `error`/`note` rows), `range_hint`, and the backing `cursor`/`total_chars` when a capture exists.
 
 Notes:
 
-- If the response includes a `cursor`, you can page through the captured content by calling `web_fetch` again with `cursor` + `offset_chars` + `limit_chars`.
+- If the response is truncated and includes a `cursor`, page through the captured content by calling `web_fetch` again with `cursor` + `offset_chars` + `limit_chars` (or a `ranges` batch for non-contiguous windows) — no re-download needed.
+- Exhausted captures are reclaimed automatically: when a read reports `has_more: false`, EnriWeb releases the server-side cursor best-effort, omits it from the result, and tells you the capture was fully read (a 10-minute TTL backstops anything left behind).
+- npm package pages (`npmjs.com/package/<name>`, including `/v/<version>` pins and scoped packages) get a structured projection: registry metadata for the requested version plus the repository README, with pagination fields propagated when the README sub-fetch is truncated.
+- EnriProxy-side URL controls travel glued to the URL and are documented in the tool description: `?enri_find=TEXT` (find text with offsets), `?enri_parts=` (select page sections), `?enri_body_offset=N&enri_body_limit=M` (body window), `?enri_section=` for YouTube (manifest/transcript/comments/description), and Drive/OneDrive folder listings.
 
 Example `arguments` object:
 
 ```jsonc
 {
   "url": "https://example.com/docs",
-  "max_chars": 200000
+  "max_chars": 200000,
+  "ranges": [
+    { "offset_chars": 0, "limit_chars": 5000 },
+    { "offset_chars": 120000, "limit_chars": 5000 }
+  ]
 }
 ```
 

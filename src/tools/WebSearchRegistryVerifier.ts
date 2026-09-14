@@ -12,8 +12,21 @@
  * - GitHub releases (api.github.com)
  *
  * @module tools/WebSearchRegistryVerifier
+ *
+ * @remarks Size note (~1470 lines, documented exception to the <=700
+ * policy): the verifier intentionally keeps one module per concern-free
+ * boundary — URL candidate detection, the five ecosystem adapters (npm,
+ * PyPI, crates.io, NuGet, GitHub), semantic-version ranking, and the
+ * TTL/LRU caches — because the adapters share the failure-normalization
+ * and cache-key invariants that a split would otherwise duplicate. The
+ * bounded JSON transport (capped streaming, timeouts, Link pagination)
+ * was extracted to {@link WebSearchRegistryHttpReader} per the AR-9
+ * touch-extraction rule; a per-ecosystem file split remains the documented
+ * follow-up for the adapters themselves.
  */
 import type { WebSearchResultEntry } from "../client/EnriProxyClient.js";
+import { WebSearchRegistryHttpReader } from "./WebSearchRegistryHttpReader.js";
+import { sliceUtf8Safe } from "../shared/Utf8SafeTextSlicer.js";
 
 /**
  * Supported registry kinds for version verification.
@@ -149,9 +162,14 @@ interface SemVerParsed {
   readonly minor: number;
 
   /**
-   * Patch version.
+   * Patch version (0 when the upstream string only carries major.minor).
    */
   readonly patch: number;
+
+  /**
+   * Fourth numeric component (NuGet-style `1.0.0.0`), compared after patch.
+   */
+  readonly build: number;
 
   /**
    * Prerelease identifiers (dot-separated).
@@ -184,10 +202,25 @@ interface NuGetServiceIndexCache {
  */
 export class WebSearchRegistryVerifier {
   /**
+   * Capped JSON HTTP reader owning the registry transport concerns.
+   */
+  private readonly httpReader: WebSearchRegistryHttpReader;
+
+  /**
    * NuGet V3 service index endpoint.
    */
   private static readonly NUGET_SERVICE_INDEX_URL: string =
     "https://api.nuget.org/v3/index.json";
+
+  /**
+   * Maximum bytes read from one npm packument (full-version manifest).
+   *
+   * @remarks
+   * Popular packages legitimately exceed the shared 5 MB registry cap
+   * (thousands of versions with full metadata); parity with the EnriCode
+   * client plane's 16 MiB download budget for the same endpoint.
+   */
+  private static readonly NPM_PACKUMENT_MAX_BYTES: number = 16_777_216;
 
   /**
    * Default concurrency for registry verification.
@@ -195,9 +228,9 @@ export class WebSearchRegistryVerifier {
   private static readonly DEFAULT_CONCURRENCY: number = 3;
 
   /**
-   * Maximum JSON payload accepted from a registry endpoint.
+   * Time one cached error entity stays fresh before a retry.
    */
-  private static readonly MAX_JSON_BYTES: number = 5_000_000;
+  private static readonly ERROR_CACHE_TTL_MS: number = 60 * 1000;
 
   /**
    * Maximum cached verification entries (LRU eviction beyond this count).
@@ -215,6 +248,17 @@ export class WebSearchRegistryVerifier {
   private readonly cache: Map<string, CacheEntry>;
 
   /**
+   * In-flight verification promises keyed by cache key.
+   *
+   * @remarks
+   * Single-flight coalescing: concurrent MCP requests verifying the same
+   * entity join one registry fetch instead of racing duplicates. Entries
+   * are removed when the verification settles (success, error or caller
+   * abort), so the map never outlives its requests.
+   */
+  private readonly inFlight: Map<string, Promise<VerifiedRegistryEntity>> = new Map();
+
+  /**
    * Cached NuGet service index resolution.
    */
   private nugetServiceIndexCache: NuGetServiceIndexCache | null;
@@ -225,6 +269,10 @@ export class WebSearchRegistryVerifier {
    * @param deps - Dependencies
    */
   public constructor(deps: WebSearchRegistryVerifierDeps) {
+    this.httpReader = new WebSearchRegistryHttpReader({
+      fetchImpl: deps.fetchImpl,
+      timeoutMs: deps.timeoutMs
+    });
     this.deps = deps;
     this.cache = new Map<string, CacheEntry>();
     this.nugetServiceIndexCache = null;
@@ -244,7 +292,11 @@ export class WebSearchRegistryVerifier {
     if (signal?.aborted) {
       return [];
     }
-    const candidates = this.collectCandidates(results);
+    // A non-array `results` payload (proxy shape drift) carries no
+    // candidates; it must degrade to unverified instead of throwing
+    // "results is not iterable" into the tool result.
+    const entries: WebSearchResultEntry[] = Array.isArray(results) ? results : [];
+    const candidates = this.collectCandidates(entries);
     if (candidates.length === 0) {
       return [];
     }
@@ -254,14 +306,23 @@ export class WebSearchRegistryVerifier {
         if (signal?.aborted) {
           throw new Error("Verificación cancelada por el cliente.");
         }
-        return await this.verifyCandidate(candidate.kind, candidate.name);
+        return await this.verifyCandidate(candidate.kind, candidate.name, signal);
       }
     );
 
-    return await this.runWithConcurrencyLimit(
-      tasks,
-      WebSearchRegistryVerifier.DEFAULT_CONCURRENCY
-    );
+    try {
+      return await this.runWithConcurrencyLimit(
+        tasks,
+        WebSearchRegistryVerifier.DEFAULT_CONCURRENCY
+      );
+    } catch (error) {
+      // Cancellation must degrade to unverified results, never fail the search
+      // whose results already succeeded.
+      if (signal?.aborted) {
+        return [];
+      }
+      throw error;
+    }
   }
 
   /**
@@ -346,42 +407,79 @@ export class WebSearchRegistryVerifier {
   }
 
   /**
+   * Maximum `releases` pages followed per GitHub verification.
+   */
+  private static readonly GITHUB_RELEASES_MAX_PAGES: number = 3;
+
+  /**
    * Verifies a single candidate, using cache when available.
    *
    * @param kind - Registry kind
    * @param name - Candidate name
+   * @param signal - Optional caller abort signal forwarded to registry fetches
    * @returns Verification result
    */
   private async verifyCandidate(
     kind: VerifiedRegistryKind,
-    name: string
+    name: string,
+    signal?: AbortSignal
   ): Promise<VerifiedRegistryEntity> {
     const cacheKey = `${kind}:${name.toLowerCase()}`;
     const nowMs = Date.now();
     const cached = this.cache.get(cacheKey);
     if (cached && cached.expiresAtMs > nowMs) {
+      // LRU semantics: `Map.set` on an existing key updates the value
+      // WITHOUT moving the insertion-order record (ECMAScript spec), so a
+      // true recency refresh requires delete-then-set; otherwise eviction
+      // below stays FIFO and evicts hot entries inserted early.
+      this.cache.delete(cacheKey);
+      this.cache.set(cacheKey, cached);
       return cached.value;
     }
 
+    // Single-flight: concurrent MCP requests verifying the same entity
+    // join the in-flight promise instead of racing duplicate registry
+    // fetches (GitHub unauthenticated quota is 60 req/h per IP).
+    const inFlight: Promise<VerifiedRegistryEntity> | undefined = this.inFlight.get(cacheKey);
+    if (inFlight !== undefined) {
+      return await inFlight;
+    }
+
+    const verification: Promise<VerifiedRegistryEntity> = (async (): Promise<VerifiedRegistryEntity> => {
     let value: VerifiedRegistryEntity;
     try {
       if (kind === "npm") {
-        value = await this.verifyNpm(name);
+        value = await this.verifyNpm(name, signal);
       } else if (kind === "pypi") {
-        value = await this.verifyPyPi(name);
+        value = await this.verifyPyPi(name, signal);
       } else if (kind === "crates") {
-        value = await this.verifyCrates(name);
+        value = await this.verifyCrates(name, signal);
       } else if (kind === "nuget") {
-        value = await this.verifyNuGet(name);
+        value = await this.verifyNuGet(name, signal);
       } else {
-        value = await this.verifyGitHub(name);
+        value = await this.verifyGitHub(name, signal);
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      value = { kind, name, status: "error", error: message };
+      // Map transport noise to stable Spanish before caching so error
+      // entities never carry raw undici English strings downstream.
+      value = {
+        kind,
+        name,
+        status: "error",
+        error: WebSearchRegistryVerifier.describeFetchError(error)
+      };
+      // Caller cancellations are not transient registry failures: caching
+      // them would poison the next search with "Operación cancelada…" rows,
+      // so the entity is returned uncached and re-verified on the next call.
+      if (WebSearchRegistryVerifier.isCallerCancellation(error, signal)) {
+        return value;
+      }
     }
 
-    this.cache.set(cacheKey, { value, expiresAtMs: nowMs + this.deps.cacheTtlMs });
+    const ttlMs: number =
+      value.status === "error" ? WebSearchRegistryVerifier.ERROR_CACHE_TTL_MS : this.deps.cacheTtlMs;
+    this.cache.delete(cacheKey);
+    this.cache.set(cacheKey, { value, expiresAtMs: nowMs + ttlMs });
     while (this.cache.size > WebSearchRegistryVerifier.MAX_CACHE_ENTRIES) {
       const oldestKey: string | undefined = this.cache.keys().next().value;
       if (oldestKey === undefined) {
@@ -390,6 +488,70 @@ export class WebSearchRegistryVerifier {
       this.cache.delete(oldestKey);
     }
     return value;
+    })();
+
+    this.inFlight.set(cacheKey, verification);
+    try {
+      return await verification;
+    } finally {
+      this.inFlight.delete(cacheKey);
+    }
+  }
+
+  /**
+   * Reports whether one failure is a caller cancellation.
+   *
+   * @remarks
+   * Internal subfetch timeouts are reclassified as `TimeoutError` upstream
+   * and stay cacheable like any transient error; only genuine caller aborts
+   * (or errors shaped like one, e.g. a Spanish "cancelada" message) skip
+   * the error cache.
+   *
+   * @param error - Failure from a registry fetch.
+   * @param signal - Caller abort signal threaded into the verification.
+   * @returns True for caller cancellations.
+   */
+  private static isCallerCancellation(error: unknown, signal?: AbortSignal): boolean {
+    if (signal?.aborted) {
+      return true;
+    }
+    if (error instanceof Error) {
+      if (error.name === "TimeoutError" || /timeout|timed out|ETIMEDOUT/iu.test(error.message)) {
+        return false;
+      }
+      if (error.name === "AbortError" || /abort|cancelad/iu.test(error.message)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Maps transport failures to stable Spanish text.
+   *
+   * @param error - Failure from a registry fetch.
+   * @returns Spanish description for the cached error entity.
+   */
+  private static describeFetchError(error: unknown): string {
+    if (error instanceof Error) {
+      const name: string = error.name;
+      const message: string = error.message;
+      if (name === "TimeoutError" || /timeout|timed out|ETIMEDOUT/iu.test(message)) {
+        return "Tiempo de espera agotado al consultar el registro; se reintentará en la próxima búsqueda.";
+      }
+      if (name === "AbortError" || /abort|cancelad/iu.test(message)) {
+        return "Operación cancelada antes de completar la verificación del registro.";
+      }
+      // Unknown failures (undici transport errors are English by nature,
+      // e.g. "fetch failed", "ENOTFOUND", "ECONNRESET") never reach the
+      // model raw: they are wrapped in a bounded Spanish note so
+      // `verified[].error` stays model-facing Spanish with a short
+      // technical tail.
+      const bounded: string = sliceUtf8Safe(message.replace(/\s+/gu, " ").trim(), 0, 120);
+      return `Fallo de red al consultar el registro (${bounded.length > 0 ? bounded : "sin detalle"}).`;
+    }
+    const boundedRaw: string = sliceUtf8Safe(String(error).replace(/\s+/gu, " ").trim(), 0, 120);
+    return `Fallo de red al consultar el registro (${boundedRaw.length > 0 ? boundedRaw : "sin detalle"}).`;
   }
 
   /**
@@ -431,13 +593,21 @@ export class WebSearchRegistryVerifier {
    * Verifies npm package versions via the npm registry.
    *
    * @param packageName - npm package name (may be scoped)
+   * @param signal - Optional caller abort signal
    * @returns Verified registry entity
    */
-  private async verifyNpm(packageName: string): Promise<VerifiedRegistryEntity> {
+  private async verifyNpm(packageName: string, signal?: AbortSignal): Promise<VerifiedRegistryEntity> {
     const encoded = encodeURIComponent(packageName);
     const sourceUrl = `https://registry.npmjs.org/${encoded}`;
-    const bodyRaw = await this.fetchJson(sourceUrl, { accept: "application/json" });
-    const body = this.tryGetRecord(bodyRaw);
+    // Popular packuments (full metadata for thousands of versions) exceed the
+    // default 5 MB cap; parity with the EnriCode client plane, which reads
+    // the same packument endpoint with a 16 MiB budget.
+    const bodyRaw = await this.httpReader.fetchJson(sourceUrl, {
+      accept: "application/json",
+      signal,
+      maxBytes: WebSearchRegistryVerifier.NPM_PACKUMENT_MAX_BYTES
+    });
+    const body = this.tryGetRecord(bodyRaw.value);
     if (!body) {
       throw new Error(`Respuesta npm inesperada para ${sourceUrl}`);
     }
@@ -485,13 +655,14 @@ export class WebSearchRegistryVerifier {
    * Verifies PyPI project versions via the PyPI JSON API.
    *
    * @param projectName - PyPI project name
+   * @param signal - Optional caller abort signal
    * @returns Verified registry entity
    */
-  private async verifyPyPi(projectName: string): Promise<VerifiedRegistryEntity> {
+  private async verifyPyPi(projectName: string, signal?: AbortSignal): Promise<VerifiedRegistryEntity> {
     const encoded = encodeURIComponent(projectName);
     const sourceUrl = `https://pypi.org/pypi/${encoded}/json`;
-    const bodyRaw = await this.fetchJson(sourceUrl, { accept: "application/json" });
-    const body = this.tryGetRecord(bodyRaw);
+    const bodyRaw = await this.httpReader.fetchJson(sourceUrl, { accept: "application/json", signal });
+    const body = this.tryGetRecord(bodyRaw.value);
     if (!body) {
       throw new Error(`Respuesta PyPI inesperada para ${sourceUrl}`);
     }
@@ -529,13 +700,14 @@ export class WebSearchRegistryVerifier {
    * Verifies crates.io package versions via the crates.io API.
    *
    * @param crateName - Crate name
+   * @param signal - Optional caller abort signal
    * @returns Verified registry entity
    */
-  private async verifyCrates(crateName: string): Promise<VerifiedRegistryEntity> {
+  private async verifyCrates(crateName: string, signal?: AbortSignal): Promise<VerifiedRegistryEntity> {
     const encoded = encodeURIComponent(crateName);
     const sourceUrl = `https://crates.io/api/v1/crates/${encoded}`;
-    const bodyRaw = await this.fetchJson(sourceUrl, { accept: "application/json" });
-    const body = this.tryGetRecord(bodyRaw);
+    const bodyRaw = await this.httpReader.fetchJson(sourceUrl, { accept: "application/json", signal });
+    const body = this.tryGetRecord(bodyRaw.value);
     if (!body) {
       throw new Error(`Respuesta crates.io inesperada para ${sourceUrl}`);
     }
@@ -596,11 +768,12 @@ export class WebSearchRegistryVerifier {
    * Verifies NuGet package versions via NuGet V3 endpoints.
    *
    * @param packageId - NuGet package ID
+   * @param signal - Optional caller abort signal
    * @returns Verified registry entity
    */
-  private async verifyNuGet(packageId: string): Promise<VerifiedRegistryEntity> {
+  private async verifyNuGet(packageId: string, signal?: AbortSignal): Promise<VerifiedRegistryEntity> {
     const lowerId = packageId.toLowerCase();
-    const serviceIndex = await this.getNuGetServiceIndex();
+    const serviceIndex = await this.getNuGetServiceIndex(signal);
 
     if (!serviceIndex.packageBaseAddressUrl) {
       return {
@@ -612,8 +785,8 @@ export class WebSearchRegistryVerifier {
     }
 
     const versionsUrl = `${serviceIndex.packageBaseAddressUrl}${lowerId}/index.json`;
-    const versionsBodyRaw = await this.fetchJson(versionsUrl, { accept: "application/json" });
-    const versionsBody = this.tryGetRecord(versionsBodyRaw);
+    const versionsBodyRaw = await this.httpReader.fetchJson(versionsUrl, { accept: "application/json", signal });
+    const versionsBody = this.tryGetRecord(versionsBodyRaw.value);
     if (!versionsBody) {
       throw new Error(`Respuesta NuGet inesperada para ${versionsUrl}`);
     }
@@ -627,11 +800,11 @@ export class WebSearchRegistryVerifier {
 
     const stablePublishedAt =
       bestStable && serviceIndex.registrationsBaseUrl
-        ? await this.tryFetchNuGetLeafPublishedAt(serviceIndex.registrationsBaseUrl, lowerId, bestStable)
+        ? await this.tryFetchNuGetLeafPublishedAt(serviceIndex.registrationsBaseUrl, lowerId, bestStable, signal)
         : null;
     const prePublishedAt =
       bestPre && serviceIndex.registrationsBaseUrl
-        ? await this.tryFetchNuGetLeafPublishedAt(serviceIndex.registrationsBaseUrl, lowerId, bestPre)
+        ? await this.tryFetchNuGetLeafPublishedAt(serviceIndex.registrationsBaseUrl, lowerId, bestPre, signal)
         : null;
 
     return {
@@ -650,10 +823,18 @@ export class WebSearchRegistryVerifier {
   /**
    * Verifies GitHub repository releases via GitHub REST API.
    *
+   * @remarks
+   * `latest_stable` comes from `/releases/latest` (GitHub's own newest
+   * non-prerelease, non-draft pick, immune to first-page truncation);
+   * prerelease candidates page through `/releases?per_page=100` following
+   * the `Link` header (up to {@link GITHUB_RELEASES_MAX_PAGES} pages, i.e.
+   * 300 newest releases — beyond that the first pages are what we keep).
+   *
    * @param repoSlug - Repository slug in the form "owner/repo"
+   * @param signal - Optional caller abort signal
    * @returns Verified registry entity
    */
-  private async verifyGitHub(repoSlug: string): Promise<VerifiedRegistryEntity> {
+  private async verifyGitHub(repoSlug: string, signal?: AbortSignal): Promise<VerifiedRegistryEntity> {
     const cleanSlug: string = repoSlug.trim().replace(/\.git$/iu, "");
     const parts = cleanSlug.split("/");
     const owner = parts[0];
@@ -662,108 +843,105 @@ export class WebSearchRegistryVerifier {
       return { kind: "github", name: repoSlug, status: "error", error: "Repositorio inválido." };
     }
 
-    const sourceUrl = `https://api.github.com/repos/${owner}/${repo}/releases?per_page=100`;
-    const releasesRaw = await this.fetchJson(sourceUrl, {
-      accept: "application/vnd.github+json",
-      githubToken: this.deps.githubToken
-    });
-    const releases = Array.isArray(releasesRaw) ? releasesRaw : [];
+    const latestUrl = `https://api.github.com/repos/${owner}/${repo}/releases/latest`;
+    const listUrl = `https://api.github.com/repos/${owner}/${repo}/releases?per_page=100`;
 
-    const stableCandidates: Array<{ version: string; publishedAt: string | null; prerelease: boolean }> = [];
-    const preCandidates: Array<{ version: string; publishedAt: string | null; prerelease: boolean }> = [];
-
-    for (const item of releases) {
-      const record = this.tryGetRecord(item);
-      if (!record) {
-        continue;
+    let latestStable: { version: string; publishedAt: string | null } | null = null;
+    try {
+      const latestPage = await this.httpReader.fetchJson(latestUrl, {
+        accept: "application/vnd.github+json",
+        githubToken: this.deps.githubToken,
+        signal
+      });
+      const latest = this.tryParseGitHubReleaseCandidate(latestPage.value);
+      if (latest !== null && !latest.prerelease) {
+        latestStable = { version: latest.version, publishedAt: latest.publishedAt };
       }
-      if (record["draft"] === true) {
-        continue;
-      }
-      const tagNameRaw = this.tryGetNonEmptyString(record["tag_name"]);
-      if (!tagNameRaw) {
-        continue;
-      }
-      const tagName = tagNameRaw.startsWith("v") ? tagNameRaw.slice(1) : tagNameRaw;
-      const publishedAt = this.tryGetNonEmptyString(record["published_at"]);
-      const isPrerelease = record["prerelease"] === true;
-      const candidate = { version: tagName, publishedAt: publishedAt ?? null, prerelease: isPrerelease };
-      if (isPrerelease) {
-        preCandidates.push(candidate);
-      } else {
-        stableCandidates.push(candidate);
+    } catch (error) {
+      // /releases/latest 404s when the repo has no published stable release
+      // at all; any other failure fails the entity honestly.
+      const message: string = error instanceof Error ? error.message : String(error);
+      if (!/HTTP 404/u.test(message)) {
+        throw error;
       }
     }
 
-    const bestStable = this.pickBestVersionCandidate(stableCandidates, { prerelease: false });
+    const stableListFallbacks: Array<{ version: string; publishedAt: string | null; prerelease: boolean }> = [];
+    const preCandidates: Array<{ version: string; publishedAt: string | null; prerelease: boolean }> = [];
+
+    let nextUrl: string | null = listUrl;
+    let fetchedPages = 0;
+    while (nextUrl !== null && fetchedPages < WebSearchRegistryVerifier.GITHUB_RELEASES_MAX_PAGES) {
+      const page = await this.httpReader.fetchJson(nextUrl, {
+        accept: "application/vnd.github+json",
+        githubToken: this.deps.githubToken,
+        signal
+      });
+      fetchedPages += 1;
+      const releases: unknown[] = Array.isArray(page.value) ? page.value : [];
+      for (const item of releases) {
+        const candidate = this.tryParseGitHubReleaseCandidate(item);
+        if (candidate === null) {
+          continue;
+        }
+        if (candidate.prerelease) {
+          preCandidates.push(candidate);
+        } else {
+          stableListFallbacks.push(candidate);
+        }
+      }
+      nextUrl = page.nextUrl;
+    }
+
+    const bestStable =
+      latestStable ?? this.pickBestVersionCandidate(stableListFallbacks, { prerelease: false });
     const bestPre = this.pickBestVersionCandidate(preCandidates, { prerelease: true });
 
     return {
       kind: "github",
       name: repoSlug,
       latest_stable: bestStable
-        ? { version: bestStable.version, published_at: bestStable.publishedAt ?? undefined, source_url: sourceUrl }
+        ? {
+            version: bestStable.version,
+            published_at: bestStable.publishedAt ?? undefined,
+            // Provenance honesty: attribute the fallback pick to the list
+            // endpoint it actually came from, not to /releases/latest.
+            source_url: latestStable !== null ? latestUrl : listUrl
+          }
         : undefined,
       latest_prerelease: bestPre
-        ? { version: bestPre.version, published_at: bestPre.publishedAt ?? undefined, source_url: sourceUrl }
+        ? { version: bestPre.version, published_at: bestPre.publishedAt ?? undefined, source_url: listUrl }
         : undefined,
       status: "ok"
     };
   }
 
   /**
-   * Performs an HTTP GET expecting a JSON response.
+   * Parses one GitHub release entry into a version candidate.
    *
-   * @param url - Target URL
-   * @param options - Request options
-   * @returns Parsed JSON object/array
+   * @param raw - Release entry from the GitHub API
+   * @returns Candidate, or null for drafts/entries without a tag
    */
-  private async fetchJson(
-    url: string,
-    options: { accept: string; githubToken?: string }
-  ): Promise<unknown> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.deps.timeoutMs);
-
-    const headers: Record<string, string> = {
-      Accept: options.accept,
-      "User-Agent": "enriweb"
+  private tryParseGitHubReleaseCandidate(
+    raw: unknown
+  ): { version: string; publishedAt: string | null; prerelease: boolean } | null {
+    const record = this.tryGetRecord(raw);
+    if (!record) {
+      return null;
+    }
+    if (record["draft"] === true) {
+      return null;
+    }
+    const tagNameRaw = this.tryGetNonEmptyString(record["tag_name"]);
+    if (!tagNameRaw) {
+      return null;
+    }
+    const tagName = tagNameRaw.startsWith("v") ? tagNameRaw.slice(1) : tagNameRaw;
+    return {
+      version: tagName,
+      publishedAt: this.tryGetNonEmptyString(record["published_at"]),
+      prerelease: record["prerelease"] === true
     };
-    if (options.githubToken && options.githubToken.trim()) {
-      headers["Authorization"] = `Bearer ${options.githubToken.trim()}`;
-    }
-
-    try {
-      const response = await this.deps.fetchImpl(url, {
-        method: "GET",
-        headers,
-        signal: controller.signal
-      });
-      if (!response.ok) {
-        throw new Error(`HTTP ${String(response.status)} para ${url}`);
-      }
-      const declaredLengthRaw: string | null = response.headers.get("content-length");
-      const declaredLength: number =
-        declaredLengthRaw !== null ? Number.parseInt(declaredLengthRaw, 10) : NaN;
-      if (Number.isFinite(declaredLength) && declaredLength > WebSearchRegistryVerifier.MAX_JSON_BYTES) {
-        throw new Error(
-          `La respuesta JSON de ${url} excede el máximo de ${String(WebSearchRegistryVerifier.MAX_JSON_BYTES)} bytes.`
-        );
-      }
-      const text: string = await response.text();
-      if (Buffer.byteLength(text, "utf8") > WebSearchRegistryVerifier.MAX_JSON_BYTES) {
-        throw new Error(
-          `La respuesta JSON de ${url} excede el máximo de ${String(WebSearchRegistryVerifier.MAX_JSON_BYTES)} bytes.`
-        );
-      }
-      try {
-        return JSON.parse(text) as unknown;
-      } catch {
-        throw new Error(`Respuesta no JSON del registro en ${url}.`);
-      }
-    } finally {
-      clearTimeout(timeout);
-    }
   }
 
   /**
@@ -778,7 +956,16 @@ export class WebSearchRegistryVerifier {
       return null;
     }
 
-    const segments = url.pathname.split("/").filter(Boolean);
+    const segments = url.pathname
+      .split("/")
+      .filter(Boolean)
+      .map((segment: string): string => {
+        try {
+          return decodeURIComponent(segment);
+        } catch {
+          return segment;
+        }
+      });
     if (segments.length < 2 || segments[0] !== "package") {
       return null;
     }
@@ -786,6 +973,14 @@ export class WebSearchRegistryVerifier {
     const first = segments[1];
     if (!first) {
       return null;
+    }
+
+    if (first.startsWith("@") && first.includes("/")) {
+      const [scope, name] = first.split("/");
+      if (!scope || !name) {
+        return null;
+      }
+      return `${scope}/${name}`;
     }
 
     if (first.startsWith("@")) {
@@ -929,6 +1124,10 @@ export class WebSearchRegistryVerifier {
   /**
    * Best-effort prerelease detection for PyPI version strings.
    *
+   * @remarks
+   * Covers PEP 440 separators and attached suffixes (`1.0b1`, `2.0beta1`)
+   * where the marker follows digits without a delimiter.
+   *
    * @param version - Version string
    * @returns True when prerelease-like
    */
@@ -938,6 +1137,9 @@ export class WebSearchRegistryVerifier {
       return true;
     }
     if (/(?:^|[._-])(?:a|b|rc|dev|alpha|beta|pre|preview)\d*/.test(lower)) {
+      return true;
+    }
+    if (/\d(?:a|b|rc|dev|alpha|beta|pre|preview)\d*/.test(lower)) {
       return true;
     }
     return false;
@@ -1012,11 +1214,10 @@ export class WebSearchRegistryVerifier {
 
     let bestByTime = filtered[0];
     for (const item of filtered.slice(1)) {
-      if (item.publishedAt && bestByTime.publishedAt) {
-        if (item.publishedAt > bestByTime.publishedAt) {
-          bestByTime = item;
-        }
-      } else if (item.publishedAt && !bestByTime.publishedAt) {
+      const itemTime: number | null = this.tryParseTimeMs(item.publishedAt);
+      const bestTime: number | null =
+        bestByTime !== undefined ? this.tryParseTimeMs(bestByTime.publishedAt) : null;
+      if (itemTime !== null && (bestTime === null || itemTime > bestTime)) {
         bestByTime = item;
       }
     }
@@ -1024,7 +1225,26 @@ export class WebSearchRegistryVerifier {
   }
 
   /**
+   * Parses one ISO timestamp to epoch milliseconds.
+   *
+   * @param value - Timestamp string, if present.
+   * @returns Epoch milliseconds, or null when missing or unparsable.
+   */
+  private tryParseTimeMs(value: string | null): number | null {
+    if (value === null || !value.trim()) {
+      return null;
+    }
+    const parsed: number = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  /**
    * Parses SemVer strings (best-effort).
+   *
+   * @remarks
+   * Accepts two to four numeric components (`1.2` → `1.2.0`, `1.2.3.4`
+   * keeps the fourth as a build tiebreak) so partial registry versions
+   * still rank instead of dropping out.
    *
    * @param raw - Version string
    * @returns Parsed semver or null
@@ -1033,7 +1253,36 @@ export class WebSearchRegistryVerifier {
     const trimmed = raw.trim();
     const normalized = trimmed.startsWith("v") ? trimmed.slice(1) : trimmed;
     const match =
-      /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(
+      /^(\d+)\.(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(
+        normalized
+      );
+    if (!match) {
+      return this.tryParseAttachedPrerelease(normalized);
+    }
+    const major = Number.parseInt(match[1] ?? "", 10);
+    const minor = Number.parseInt(match[2] ?? "", 10);
+    const patch = match[3] === undefined ? 0 : Number.parseInt(match[3], 10);
+    const build = match[4] === undefined ? 0 : Number.parseInt(match[4], 10);
+    if (!Number.isFinite(major) || !Number.isFinite(minor) || !Number.isFinite(patch) || !Number.isFinite(build)) {
+      return null;
+    }
+    const prereleaseRaw = match[5];
+    const prerelease = prereleaseRaw
+      ? prereleaseRaw.split(".").filter((p) => p.length > 0)
+      : [];
+
+    return { raw: normalized, major, minor, patch, build, prerelease };
+  }
+
+  /**
+   * Parses versions with attached prerelease suffixes (`2024.1b1`, `2.0rc2`).
+   *
+   * @param normalized - Version string without a leading "v".
+   * @returns Parsed semver or null.
+   */
+  private tryParseAttachedPrerelease(normalized: string): SemVerParsed | null {
+    const match =
+      /^(\d+)\.(\d+)(?:\.(\d+))?(?:\.(\d+))?(a|b|rc|alpha|beta|pre|preview|dev)(\d*)$/i.exec(
         normalized
       );
     if (!match) {
@@ -1041,16 +1290,21 @@ export class WebSearchRegistryVerifier {
     }
     const major = Number.parseInt(match[1] ?? "", 10);
     const minor = Number.parseInt(match[2] ?? "", 10);
-    const patch = Number.parseInt(match[3] ?? "", 10);
-    if (!Number.isFinite(major) || !Number.isFinite(minor) || !Number.isFinite(patch)) {
+    const patch = match[3] === undefined ? 0 : Number.parseInt(match[3], 10);
+    const build = match[4] === undefined ? 0 : Number.parseInt(match[4], 10);
+    if (!Number.isFinite(major) || !Number.isFinite(minor) || !Number.isFinite(patch) || !Number.isFinite(build)) {
       return null;
     }
-    const prereleaseRaw = match[4];
-    const prerelease = prereleaseRaw
-      ? prereleaseRaw.split(".").filter((p) => p.length > 0)
-      : [];
-
-    return { raw: normalized, major, minor, patch, prerelease };
+    const marker: string = (match[5] ?? "").toLowerCase();
+    const number: string = match[6] ?? "";
+    return {
+      raw: normalized,
+      major,
+      minor,
+      patch,
+      build,
+      prerelease: [number ? `${marker}.${number}` : marker]
+    };
   }
 
   /**
@@ -1069,6 +1323,9 @@ export class WebSearchRegistryVerifier {
     }
     if (a.patch !== b.patch) {
       return a.patch - b.patch;
+    }
+    if (a.build !== b.build) {
+      return a.build - b.build;
     }
 
     const aPre = a.prerelease;
@@ -1140,6 +1397,7 @@ export class WebSearchRegistryVerifier {
     }
 
     let best: string | null = null;
+    let bestMs = -1;
     for (const item of releaseFiles) {
       const record = this.tryGetRecord(item);
       if (!record) {
@@ -1149,8 +1407,13 @@ export class WebSearchRegistryVerifier {
       if (!uploadTime) {
         continue;
       }
-      if (!best || uploadTime > best) {
+      const uploadMs: number | null = this.tryParseTimeMs(uploadTime);
+      if (uploadMs === null) {
+        continue;
+      }
+      if (best === null || uploadMs > bestMs) {
         best = uploadTime;
+        bestMs = uploadMs;
       }
     }
     return best;
@@ -1159,18 +1422,20 @@ export class WebSearchRegistryVerifier {
   /**
    * Resolves NuGet V3 endpoints from the service index, with caching.
    *
+   * @param signal - Optional caller abort signal
    * @returns Service index cache
    */
-  private async getNuGetServiceIndex(): Promise<NuGetServiceIndexCache> {
+  private async getNuGetServiceIndex(signal?: AbortSignal): Promise<NuGetServiceIndexCache> {
     const nowMs = Date.now();
     if (this.nugetServiceIndexCache && this.nugetServiceIndexCache.expiresAtMs > nowMs) {
       return this.nugetServiceIndexCache;
     }
 
-    const bodyRaw = await this.fetchJson(WebSearchRegistryVerifier.NUGET_SERVICE_INDEX_URL, {
-      accept: "application/json"
+    const bodyRaw = await this.httpReader.fetchJson(WebSearchRegistryVerifier.NUGET_SERVICE_INDEX_URL, {
+      accept: "application/json",
+      signal
     });
-    const body = this.tryGetRecord(bodyRaw);
+    const body = this.tryGetRecord(bodyRaw.value);
     if (!body) {
       throw new Error("Respuesta inesperada del índice de NuGet.");
     }
@@ -1223,17 +1488,19 @@ export class WebSearchRegistryVerifier {
    * @param registrationsBaseUrl - Registrations base URL
    * @param lowerId - Lowercase package ID
    * @param version - Version string
+   * @param signal - Optional caller abort signal
    * @returns Published ISO 8601 timestamp or null
    */
   private async tryFetchNuGetLeafPublishedAt(
     registrationsBaseUrl: string,
     lowerId: string,
-    version: string
+    version: string,
+    signal?: AbortSignal
   ): Promise<string | null> {
     const leafUrl = `${registrationsBaseUrl}${lowerId}/${encodeURIComponent(version)}.json`;
     try {
-      const bodyRaw = await this.fetchJson(leafUrl, { accept: "application/json" });
-      const body = this.tryGetRecord(bodyRaw);
+      const bodyRaw = await this.httpReader.fetchJson(leafUrl, { accept: "application/json", signal });
+      const body = this.tryGetRecord(bodyRaw.value);
       if (!body) {
         return null;
       }

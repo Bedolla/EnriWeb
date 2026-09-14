@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
-import { EnriProxyClient, EnriProxyHttpError } from "../src/client/EnriProxyClient.js";
+import { EnriProxyClient, EnriProxyHttpError, resolveMaxResponseBytes } from "../src/client/EnriProxyClient.js";
 
 /**
  * Recorded HTTP request payload for assertions.
@@ -264,5 +264,197 @@ describe("EnriProxyClient request payloads", () => {
       url: "https://example.com/docs",
       format: "markdown"
     });
+  });
+
+  it("omits zero limits and hash-only anchors, and normalizes budgets", async () => {
+    let recorded: RecordedRequest | null = null;
+    const started = await startServer(async (req, res) => {
+      const body = await readJsonBody(req);
+      recorded = {
+        url: req.url ?? "",
+        method: req.method ?? "",
+        headers: req.headers,
+        body
+      };
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ url: "https://example.com", content: "ok" }));
+    });
+    server = started.server;
+
+    const client = new EnriProxyClient({
+      baseUrl: started.baseUrl,
+      apiKey: "test-key",
+      timeoutMs: 1000
+    });
+
+    await client.webFetch({
+      cursor: "00000000-0000-4000-8000-000000000000",
+      offsetChars: 0,
+      limitChars: 0,
+      maxChars: Number.NaN,
+      anchor: "###"
+    } as never);
+
+    expect(recorded?.body).not.toHaveProperty("limit_chars");
+    expect(recorded?.body).not.toHaveProperty("max_chars");
+    expect(recorded?.body).not.toHaveProperty("anchor");
+    expect(recorded?.body).toMatchObject({
+      cursor: "00000000-0000-4000-8000-000000000000",
+      offset_chars: 0
+    });
+  });
+});
+
+describe("EnriProxyClient cursor deletion", () => {
+  let server: Server | null = null;
+
+  afterEach(async () => {
+    if (!server) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      try {
+        server?.closeAllConnections();
+        server?.close(() => resolve());
+      } catch {
+        resolve();
+      }
+    });
+    server = null;
+  });
+
+  it("sends {cursor, action:'delete'} and surfaces the deleted outcome", async () => {
+    let recorded: RecordedRequest | null = null;
+    const started = await startServer(async (req, res) => {
+      const body = await readJsonBody(req);
+      recorded = {
+        url: req.url ?? "",
+        method: req.method ?? "",
+        headers: req.headers,
+        body
+      };
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ deleted: true, cursor: body["cursor"] }));
+    });
+    server = started.server;
+
+    const client = new EnriProxyClient({
+      baseUrl: started.baseUrl,
+      apiKey: "test-key",
+      timeoutMs: 1000
+    });
+
+    const response = await client.webFetch({
+      cursor: "00000000-0000-4000-8000-000000000000",
+      action: "delete"
+    });
+
+    expect(recorded?.body).toMatchObject({
+      cursor: "00000000-0000-4000-8000-000000000000",
+      action: "delete"
+    });
+    expect(response.deleted).toBe(true);
+  });
+});
+
+describe("EnriProxyClient subfetch abort labeling", () => {
+  const startHangingServer = async (): Promise<{ readonly server: Server; readonly baseUrl: string }> =>
+    startServer(() => {
+      // Accepts requests and never answers.
+    });
+
+  it("labels a subfetch timeout as an expiration, not a client cancellation", async () => {
+    const started = await startHangingServer();
+
+    try {
+      const client = new EnriProxyClient({
+        baseUrl: started.baseUrl,
+        apiKey: "test",
+        timeoutMs: 5000
+      });
+      const caller = new AbortController();
+      const combined: AbortSignal = AbortSignal.any([caller.signal, AbortSignal.timeout(80)]);
+
+      await expect(
+        client.webFetch(
+          { url: "https://example.com" },
+          combined,
+          { callerSignal: caller.signal, subfetchTimeoutMs: 80 }
+        )
+      ).rejects.toThrow(/expiró después de 80ms/);
+    } finally {
+      started.server.closeAllConnections();
+      await new Promise<void>((resolve) => started.server.close(() => resolve()));
+    }
+  });
+
+  it("keeps reporting caller aborts as client cancellations", async () => {
+    const started = await startHangingServer();
+
+    try {
+      const client = new EnriProxyClient({
+        baseUrl: started.baseUrl,
+        apiKey: "test",
+        timeoutMs: 5000
+      });
+      const caller = new AbortController();
+      const combined: AbortSignal = AbortSignal.any([caller.signal, AbortSignal.timeout(5000)]);
+      setTimeout(() => caller.abort(), 60);
+
+      await expect(
+        client.webFetch(
+          { url: "https://example.com" },
+          combined,
+          { callerSignal: caller.signal, subfetchTimeoutMs: 5000 }
+        )
+      ).rejects.toThrow(/cancelada por el cliente/);
+    } finally {
+      started.server.closeAllConnections();
+      await new Promise<void>((resolve) => started.server.close(() => resolve()));
+    }
+  });
+});
+
+describe("EnriProxyClient response size ceiling", () => {
+  it("derives the cap from max_chars instead of the flat 20MB", () => {
+    expect(resolveMaxResponseBytes(undefined)).toBe(20 * 1024 * 1024);
+    expect(resolveMaxResponseBytes(200_000)).toBe(20 * 1024 * 1024);
+    expect(resolveMaxResponseBytes(4_000_000)).toBe(6 * 4_000_000 + 1024 * 1024);
+  });
+
+  it("accepts a >20MB escaped payload for a 4M-char budget", async () => {
+    let server: Server | null = null;
+    try {
+      const payload: string = JSON.stringify({
+        content: "a\"b\nc".repeat(3_000_000),
+        status: 200,
+        content_type: "text/plain",
+        truncated: true
+      });
+      expect(Buffer.byteLength(payload, "utf8")).toBeGreaterThan(20 * 1024 * 1024);
+
+      const started = await startServer((_req, res) => {
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "application/json");
+        res.end(payload);
+      });
+      server = started.server;
+
+      const client = new EnriProxyClient({
+        baseUrl: started.baseUrl,
+        apiKey: "test",
+        timeoutMs: 30_000
+      });
+
+      const response = await client.webFetch({ url: "https://example.com/big", maxChars: 4_000_000 });
+      expect(response.status).toBe(200);
+    } finally {
+      if (server) {
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server?.close(() => resolve()));
+      }
+    }
   });
 });

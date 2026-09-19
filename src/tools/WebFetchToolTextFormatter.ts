@@ -162,15 +162,24 @@ export class WebFetchToolTextFormatter {
         : "";
     // Screenshot honesty for text-only clients: the images ride MCP image
     // content blocks (invisible here), so the text names what was captured
-    // or why it was skipped.
+    // or why it was skipped. The "analyzed" mode inlines the server-side
+    // visual descriptions — that IS the visual material for blind models.
+    const analyzedSegments: ReadonlyArray<string | null> = result.screenshot_analyses ?? [];
     const screenshotNote =
       result.screenshot_status === "captured" && result.screenshots !== undefined
         ? `\n\n[Capturas de pantalla: ${String(result.screenshots.length)} segmento(s) JPEG adjuntos como bloques de imagen (${result.screenshots
             .map((segment) => `${String(segment.width)}x${String(segment.height)} @scroll ${String(segment.scroll_y)}px`)
             .join(", ")}).]`
-        : result.screenshot_status === "skipped"
-          ? `\n\n[Capturas de pantalla omitidas (razón: ${result.screenshot_reason ?? "desconocida"}); el contenido de texto arriba es todo el material disponible.]`
-          : "";
+        : result.screenshot_status === "analyzed"
+          ? `\n\n[Análisis visual de la página (${String(analyzedSegments.length)} segmento(s), generado del lado del servidor):]\n${analyzedSegments
+              .map((description, index) =>
+                description === null || description.length <= 0
+                  ? `Segmento ${String(index + 1)}: análisis no disponible.`
+                  : `Segmento ${String(index + 1)}: ${description}`)
+              .join("\n")}`
+          : result.screenshot_status === "skipped"
+            ? `\n\n[Capturas de pantalla omitidas (razón: ${result.screenshot_reason ?? "desconocida"}); el contenido de texto arriba es todo el material disponible.]`
+            : "";
 
     return (
       header +

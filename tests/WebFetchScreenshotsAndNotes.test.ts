@@ -158,6 +158,28 @@ describe("EnriProxyClient.webFetch screenshot wire field", (): void => {
     }
     expect(bodies[0]?.["screenshot"]).toBe("none");
   });
+
+  it("parses and forwards the analyze mode for blind models", (): void => {
+    expect(parseWebFetchParams({ url: "https://example.test", screenshot: "analyze" }).screenshot).toBe("analyze");
+  });
+
+  it("formats server-side screenshot analyses as inline text", (): void => {
+    const result = {
+      content: "PERRABBIT GAME OVER",
+      status: 200,
+      content_type: "text/plain",
+      truncated: false,
+      url: "https://enrirego.test",
+      screenshot_status: "analyzed" as const,
+      screenshot_analyses: [
+        "Juego de saltos con un conejo sobre fondo beige; texto GAME OVER centrado y la instrucción CLICK/TOUCH TO JUMP debajo."
+      ]
+    } as WebFetchToolResult;
+    const text = WebFetchToolTextFormatter.format(result);
+    expect(text).toContain("Análisis visual de la página (1 segmento(s)");
+    expect(text).toContain("Segmento 1: Juego de saltos");
+    expect(text).not.toContain("bloques de imagen");
+  });
 });
 
 describe("WebFetchToolTextFormatter screenshot notes", (): void => {

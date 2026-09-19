@@ -250,7 +250,7 @@ export interface WebFetchUrlRequest {
    * only when the extracted text is too thin to describe the page, "force"
    * captures regardless, "none" never captures.
    */
-  readonly screenshot?: "auto" | "force" | "none";
+  readonly screenshot?: "auto" | "force" | "none" | "analyze";
 }
 
 /**
@@ -468,7 +468,14 @@ export interface WebFetchResponse {
    * Whether the proxy captured ("captured") or skipped ("skipped")
    * screenshots for this call.
    */
-  readonly screenshot_status?: "captured" | "skipped";
+  readonly screenshot_status?: "captured" | "analyzed" | "skipped";
+
+  /**
+   * Text descriptions per screenshot segment produced by the
+   * `screenshot: "analyze"` mode (server-side vision). Present only when
+   * `screenshot_status` is "analyzed".
+   */
+  readonly screenshot_analyses?: ReadonlyArray<string | null>;
 
   /**
    * Why screenshots were captured or skipped (e.g. "auto_thin_text",

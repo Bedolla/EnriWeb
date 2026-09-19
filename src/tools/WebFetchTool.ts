@@ -91,18 +91,23 @@ export interface WebFetchToolParams {
   readonly ranges?: readonly WebFetchRangeSpec[];
 
   /**
-   * Screenshot request for vision-capable MCP clients: "auto" captures only
-   * when the extracted text is too thin to describe the page, "force"
-   * captures regardless of text richness, "none" never captures.
+   * Screenshot mode for the fetched page. Pick by what YOUR model can do:
+   *
+   * - No field (or "auto"): server captures screenshots ONLY when the page
+   *   has very little text (games, dashboards, maps). Images arrive as MCP
+   *   image blocks — use this only if your model can SEE images.
+   * - "analyze": USE THIS IF YOUR MODEL CANNOT SEE IMAGES. The server
+   *   captures the page and returns a TEXT DESCRIPTION of what it looks
+   *   like ("Análisis visual: ...") in `screenshot_analyses`. No images are
+   *   returned, so blind models never break.
+   * - "force": always capture and return image blocks (needs vision).
+   * - "none": never capture anything; pure text, cheapest.
    *
    * @remarks
-   * The proxy now treats an ABSENT field as "auto" too, so thin-text pages
-   * attach screenshots by default; pass "none" explicitly to save vision
-   * tokens. Honored only on plain URL single reads (the EnriProxy stealth
-   * tier captures while the page is alive); cursor/ranges/delete modes
-   * ignore it.
+   * The proxy treats an ABSENT field as "auto". Honored only on plain URL
+   * single reads; cursor/ranges/delete modes ignore it.
    */
-  readonly screenshot?: "auto" | "force" | "none";
+  readonly screenshot?: "auto" | "force" | "none" | "analyze";
 }
 
 /**
@@ -235,16 +240,25 @@ export interface WebFetchToolResult extends Record<string, unknown> {
   readonly screenshots?: readonly WebFetchResultScreenshot[];
 
   /**
-   * Whether the proxy captured screenshots ("captured") or skipped them
-   * ("skipped") for this call.
+   * Whether the proxy captured screenshots ("captured"), analyzed them
+   * server-side into text ("analyzed"), or skipped them ("skipped").
    */
-  readonly screenshot_status?: "captured" | "skipped";
+  readonly screenshot_status?: "captured" | "analyzed" | "skipped";
 
   /**
    * Why screenshots were captured or skipped (e.g. "auto_thin_text",
-   * "forced", "auto_rich_text", "lane_unsupported", "capture_failed").
+   * "forced", "analyze_requested", "auto_rich_text", "lane_unsupported",
+   * "capture_failed").
    */
   readonly screenshot_reason?: string;
+
+  /**
+   * Text descriptions of the page screenshots produced server-side by the
+   * `screenshot: "analyze"` mode, one per scroll segment. Present only when
+   * `screenshot_status` is "analyzed"; entries can be `null` when one
+   * segment failed analysis.
+   */
+  readonly screenshot_analyses?: ReadonlyArray<string | null>;
 }
 
 /**
@@ -757,7 +771,10 @@ export class WebFetchTool {
         ? { screenshots: response.screenshots }
         : {}),
       ...(response.screenshot_status !== undefined ? { screenshot_status: response.screenshot_status } : {}),
-      ...(response.screenshot_reason !== undefined ? { screenshot_reason: response.screenshot_reason } : {})
+      ...(response.screenshot_reason !== undefined ? { screenshot_reason: response.screenshot_reason } : {}),
+      ...(response.screenshot_analyses !== undefined
+        ? { screenshot_analyses: response.screenshot_analyses }
+        : {})
     };
     return localSliceRanges.length > 0
       ? this.rangesExecutor.applyLocalRangesToResult(single, localSliceRanges, maxChars)

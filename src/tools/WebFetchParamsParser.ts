@@ -92,8 +92,11 @@ export function parseWebFetchParams(raw: unknown): WebFetchToolParams {
   const ranges = parseRanges(obj["ranges"]);
   // Strict enum parity with the proxy body parser: unknown values degrade
   // to "not requested" instead of failing the call.
-  const screenshot: "auto" | "force" | "none" | undefined =
-    obj["screenshot"] === "auto" || obj["screenshot"] === "force" || obj["screenshot"] === "none"
+  const screenshot: "auto" | "force" | "none" | "analyze" | undefined =
+    obj["screenshot"] === "auto" ||
+    obj["screenshot"] === "force" ||
+    obj["screenshot"] === "none" ||
+    obj["screenshot"] === "analyze"
       ? obj["screenshot"]
       : undefined;
 

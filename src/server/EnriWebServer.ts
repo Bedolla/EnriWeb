@@ -666,9 +666,9 @@ export class EnriWebServer {
           },
           screenshot: {
             type: "string",
-            enum: ["auto", "force", "none"],
+            enum: ["auto", "force", "none", "analyze"],
             description:
-              "Captura de pantalla renderizada de la página, para páginas donde el texto extraído no describe lo que se ve (juegos en canvas, dashboards, mapas, splash pages). 'auto' (recomendado) captura sólo cuando el texto extraído es escaso; 'force' captura siempre; 'none' nunca. Solo aplica a la lectura única completa por url (no cursor/ranges). La captura la hace el navegador stealth de EnriProxy (hasta 3 segmentos JPEG de scroll) y viaja como bloques de imagen MCP para clientes con visión; cada segmento cuesta ~1,400 tokens de visión. Cuando no se captura, la respuesta lo indica con screenshot_status='skipped' y su razón."
+              "Captura de pantalla renderizada de la página (juegos en canvas, dashboards, mapas, splash pages donde el texto no describe lo que se ve). ELIGE según TU modelo: (1) Si NO puedes ver imágenes: usa 'analyze' — el servidor captura la página (hasta 3 segmentos de scroll) y te devuelve un TEXTO que describe lo que se ve ('Análisis visual: ...'), sin imágenes que rompan tu request. (2) Si SÍ puedes ver imágenes: omite el parámetro o usa 'auto' (captura sólo cuando el texto es escaso, <1,500 caracteres) o 'force' (captura siempre); las imágenes llegan como bloques de imagen MCP (~1,400 tokens de visión por segmento). (3) Si no necesitas nada visual y quieres ahorrar tokens: 'none'. Solo aplica a la lectura única completa por url (no cursor/ranges). Cuando no se captura, la respuesta lo indica con screenshot_status='skipped' y su razón."
           }
         },
         anyOf: [{ required: ["url"] }, { required: ["cursor"] }]
@@ -695,9 +695,10 @@ export class EnriWebServer {
           fetched_truncated: { type: "boolean", description: "Si el fetch aguas arriba se truncó." },
           page_offset_chars: { type: "integer", description: "Offset base-cero dentro de `content` donde empieza la página sin decoraciones (lecturas url con encabezado de estado)." },
           page_chars: { type: "integer", description: "Longitud de la página sin decoraciones dentro de `content` (ventanas de rangos direccionan esta base)." },
-          screenshot_status: { type: "string", description: "'captured' cuando el proxy capturó capturas de pantalla; 'skipped' cuando no (solo cuando se pidió screenshot)." },
-          screenshot_reason: { type: "string", description: "Razón de captura o omisión: auto_thin_text, forced, auto_rich_text, background_verification, http_error_status, capture_failed, lane_unsupported." },
+          screenshot_status: { type: "string", description: "'captured' cuando el proxy adjuntó capturas como bloques de imagen; 'analyzed' cuando las convirtió en texto del lado del servidor (modo 'analyze'); 'skipped' cuando no (solo cuando se pidió screenshot)." },
+          screenshot_reason: { type: "string", description: "Razón de captura o omisión: auto_thin_text, forced, analyze_requested, auto_rich_text, background_verification, http_error_status, capture_failed, lane_unsupported." },
           screenshot_segments: { type: "integer", description: "Número de segmentos de captura entregados como bloques de imagen MCP (el payload base64 no viaja en structuredContent)." },
+          screenshot_analyses: { type: "array", items: { type: "string" }, description: "Descripciones en TEXTO de cada segmento de captura, generadas del lado del servidor con el modo screenshot='analyze' (para modelos que no pueden ver imágenes). Un elemento null significa que ese segmento falló el análisis." },
           deleted: { type: "boolean", description: "Resultado de action 'delete': si el cursor existía y se liberó." },
           range_applied: { type: "boolean", description: "Marca de resultado por rangos agrupados." },
           range_count: { type: "integer", description: "Número de rangos devueltos." },

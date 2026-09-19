@@ -207,6 +207,12 @@ export interface WebSearchToolResult extends Record<string, unknown> {
   readonly fetchedCount?: number;
 
   /**
+   * Spanish note from the proxy explaining the auto-fetch outcome (e.g. why
+   * `fetchedContents` is empty or partial).
+   */
+  readonly fetchNote?: string;
+
+  /**
    * Per-query URL groups reported by EnriProxy for batched searches.
    */
   readonly perQuery?: WebSearchPerQueryGroup[];
@@ -245,6 +251,13 @@ export interface WebSearchToolDeps {
    * Default timeout in milliseconds.
    */
   readonly defaultTimeoutMs: number;
+
+  /**
+   * Operator SearXNG engine selector applied to every search (for example
+   * `"google"`). Operator configuration from `ENRIWEB_SEARCH_ENGINES`, never
+   * model input: the model-facing schema exposes no engine option.
+   */
+  readonly defaultEngines?: string;
 
   /**
    * Registry verifier used to enrich search results with canonical versions.
@@ -392,7 +405,8 @@ export class WebSearchTool {
         recency: params.recency,
         allowedDomains: params.allowedDomains,
         blockedDomains: params.blockedDomains,
-        searchPrompt: params.searchPrompt
+        searchPrompt: params.searchPrompt,
+        engines: this.deps.defaultEngines
       },
       signal
     );
@@ -423,6 +437,10 @@ export class WebSearchTool {
           : undefined,
       fetchedContents: response.fetched_contents,
       fetchedCount: response.fetched_count,
+      fetchNote:
+        typeof response.fetch_note === "string" && response.fetch_note.length > 0
+          ? response.fetch_note
+          : undefined,
       perQuery: response.per_query,
       verified: verified.length > 0 ? verified : undefined
     };
@@ -504,6 +522,12 @@ export class WebSearchTool {
       sections.push(
         `CONTENIDOS DE PÁGINA VERIFICADOS (${result.fetchedContents.length}${rendered.recortado ? ", recortados para vista previa" : ""}):\n\n${rendered.text}`
       );
+    }
+    if (result.fetchNote !== undefined) {
+      // The proxy's auto-fetch note explains why `fetchedContents` is empty
+      // or partial (e.g. every candidate link was dead or blocked): without
+      // it the model assumes the verification silently vanished.
+      sections.push(result.fetchNote);
     }
     if (result.verified && result.verified.length > 0) {
       sections.push(WebSearchTool.renderVerifiedSection(result.verified));

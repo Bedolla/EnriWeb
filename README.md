@@ -98,14 +98,16 @@ EnriWeb is configured via environment variables:
 
 - `ENRIPROXY_URL` (`string`, optional, default: `http://127.0.0.1:8787`)
 - `ENRIPROXY_API_KEY` (`string`, required)
-- `ENRIWEB_TIMEOUT_MS` (`string`, optional, default: `180000`)
-  - Parsed as an integer (milliseconds); fetch budget covering the proxy's total fetch budget (150 s) plus margin, matching EnriCode's remote fetch budget.
-- `ENRIWEB_SEARCH_TIMEOUT_MS` (`string`, optional, default: `320000`)
-  - Parsed as an integer (milliseconds); search budget covering the SearXNG engine budget plus server auto-fetch.
+- `ENRIWEB_TIMEOUT_MS` (`string`, optional, default: `300000`)
+  - Parsed as an integer (milliseconds); fetch budget at double the proxy's total fetch budget (150 s) plus margin. Operator policy is a uniform 5-minute tool budget for both tools; when slow SearXNG engines are kept (server budget up to ~310 s), raise `ENRIWEB_SEARCH_TIMEOUT_MS` beyond the 300 s default.
+- `ENRIWEB_SEARCH_TIMEOUT_MS` (`string`, optional, default: `300000`)
+  - Parsed as an integer (milliseconds); uniform 5-minute tool budget. Residual: the SearXNG server budget alone can reach 310 s on slow-engine days, so searches slower than 300 s still end in the retryable timeout; raise the env var to extend it.
 - `ENRIWEB_WEB_FETCH_DEFAULT_MAX_CHARS` (`string`, optional, default: `200000`, max `4000000`)
   - Parsed as an integer.
 - `ENRIWEB_GITHUB_TOKEN` (`string`, optional)
   - Used for GitHub API enrichment to improve rate limits.
+- `ENRIWEB_SEARCH_ENGINES` (`string`, optional, e.g. `google` or `google,bing`)
+  - Operator SearXNG engine selector applied to every `web_search` call. Overrides the EnriProxy server default without reconfiguring the server; unset uses the server configuration. This is operator configuration on purpose — the model-facing `web_search` schema exposes no engine option so models cannot narrow their own results. Invalid values warn on stderr and are ignored.
 
 ## MCP tools
 
@@ -173,7 +175,7 @@ Fetch and read content from a URL via EnriProxy.
 Inputs:
 
 - `url` (`string`, required unless `cursor` is provided): full URL (`http://` or `https://`).
-- `cursor` (`string`, optional): opaque cursor returned by a previous `web_fetch` call. A valid cursor always wins over a coexisting `url`.
+- `cursor` (`string`, optional): opaque cursor returned by a previous `web_fetch` call. A valid cursor always wins over a coexisting `url`. Send `url` together with `cursor` whenever you know it: if the cursor expired server-side (TTL ~10 minutes), EnriWeb transparently re-fetches the url with the same parameters and returns fresh content with a new cursor (`recovered_from_expired_cursor`) instead of an error.
 - `action` (`"delete"`, optional): releases the server-side capture owned by `cursor`. Send with `cursor`; other parameters are ignored. Responds `{ deleted, cursor }`.
 - `ranges` (`array`, 1-10 items, optional): grouped `{ offset_chars, limit_chars }` windows read in one call. With `cursor`: each range is read server-side in parallel and the response is a grouped object (`range_applied`, `range_count`, `ranges[]`, `range_hint`). With `url`: the document is fetched first; if it arrives truncated with a cursor the ranges read that capture in parallel, otherwise they are sliced locally from the returned content.
 - `offset_chars` (`integer`, optional, default: `0`; aliases `offsetChars` and legacy `offset`): read offset in characters. With `cursor`: server-side window over the capture. With `url` (first read): local slice over the returned content, like EnriCode.
@@ -194,7 +196,7 @@ Outputs (`structuredContent`):
 
 Notes:
 
-- If the response is truncated and includes a `cursor`, page through the captured content by calling `web_fetch` again with `cursor` + `offset_chars` + `limit_chars` (or a `ranges` batch for non-contiguous windows) — no re-download needed.
+- If the response is truncated and includes a `cursor`, page through the captured content by calling `web_fetch` again with `cursor` + `offset_chars` + `limit_chars` (or a `ranges` batch for non-contiguous windows) — no re-download needed. Always echo the `url` on cursor calls: an expired cursor then recovers automatically (`recovered_from_expired_cursor: true`, fresh offsets, new cursor) instead of failing with HTTP 400.
 - Exhausted captures are reclaimed automatically: when a read reports `has_more: false`, EnriWeb releases the server-side cursor best-effort, omits it from the result, and tells you the capture was fully read (a 10-minute TTL backstops anything left behind).
 - npm package pages (`npmjs.com/package/<name>`, including `/v/<version>` pins and scoped packages) get a structured projection: registry metadata for the requested version plus the repository README, with pagination fields propagated when the README sub-fetch is truncated.
 - EnriProxy-side URL controls travel glued to the URL and are documented in the tool description: `?enri_find=TEXT` (find text with offsets), `?enri_parts=` (select page sections), `?enri_body_offset=N&enri_body_limit=M` (body window), `?enri_section=` for YouTube (manifest/transcript/comments/description), and Drive/OneDrive folder listings.

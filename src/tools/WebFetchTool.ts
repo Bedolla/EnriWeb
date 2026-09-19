@@ -12,7 +12,7 @@
  *
  * @module tools/WebFetchTool
  */
-import { type EnriProxyClient, MAX_WIRE_MAX_CHARS } from "../client/EnriProxyClient.js";
+import { type EnriProxyClient, MAX_WIRE_MAX_CHARS, isExpiredCursorError, isExpiredCursorMessageText } from "../client/EnriProxyClient.js";
 import { WebFetchNpmProjection } from "./WebFetchNpmProjection.js";
 import { parseWebFetchParams } from "./WebFetchParamsParser.js";
 import { WebFetchRangesExecutor } from "./WebFetchRangesExecutor.js";
@@ -89,6 +89,20 @@ export interface WebFetchToolParams {
    * Grouped character ranges read in one call (max 10).
    */
   readonly ranges?: readonly WebFetchRangeSpec[];
+
+  /**
+   * Screenshot request for vision-capable MCP clients: "auto" captures only
+   * when the extracted text is too thin to describe the page, "force"
+   * captures regardless of text richness, "none" never captures.
+   *
+   * @remarks
+   * The proxy now treats an ABSENT field as "auto" too, so thin-text pages
+   * attach screenshots by default; pass "none" explicitly to save vision
+   * tokens. Honored only on plain URL single reads (the EnriProxy stealth
+   * tier captures while the page is alive); cursor/ranges/delete modes
+   * ignore it.
+   */
+  readonly screenshot?: "auto" | "force" | "none";
 }
 
 /**
@@ -195,6 +209,72 @@ export interface WebFetchToolResult extends Record<string, unknown> {
    * proxy's bounds for local range windows).
    */
   readonly page_chars?: number;
+
+  /**
+   * True when the dead cursor supplied with the call expired server-side and
+   * the tool transparently re-fetched `url` with the same parameters: the
+   * returned offsets address the fresh capture and `cursor` (when present)
+   * is the new cursor. Never re-send the previous cursor.
+   */
+  readonly recovered_from_expired_cursor?: boolean;
+
+  /**
+   * Spanish note describing the transparent expired-cursor recovery.
+   */
+  readonly recovery_note?: string;
+
+  /**
+   * Captured page screenshots in scroll order, when a screenshot request
+   * passed the proxy's capture policy.
+   *
+   * @remarks
+   * Raw passthrough for the server layer: the MCP handler moves these to
+   * image content blocks and omits them from `structuredContent` (the
+   * text/JSON channels must never inline the base64 payloads).
+   */
+  readonly screenshots?: readonly WebFetchResultScreenshot[];
+
+  /**
+   * Whether the proxy captured screenshots ("captured") or skipped them
+   * ("skipped") for this call.
+   */
+  readonly screenshot_status?: "captured" | "skipped";
+
+  /**
+   * Why screenshots were captured or skipped (e.g. "auto_thin_text",
+   * "forced", "auto_rich_text", "lane_unsupported", "capture_failed").
+   */
+  readonly screenshot_reason?: string;
+}
+
+/**
+ * One captured page screenshot segment attached to a web_fetch result.
+ */
+export interface WebFetchResultScreenshot {
+  /**
+   * Image MIME type (always `image/jpeg`).
+   */
+  readonly mime_type: string;
+
+  /**
+   * Base64-encoded image bytes.
+   */
+  readonly base64: string;
+
+  /**
+   * Image width in pixels.
+   */
+  readonly width: number;
+
+  /**
+   * Image height in pixels.
+   */
+  readonly height: number;
+
+  /**
+   * Window scrollY (pixels) at capture time.
+   */
+  readonly scroll_y: number;
 }
 
 /**
@@ -322,6 +402,18 @@ export interface WebFetchToolRangesResult extends Record<string, unknown> {
    * Total capture size in characters, when the base read reported it.
    */
   readonly total_chars?: number;
+
+  /**
+   * True when the dead cursor supplied with the call expired server-side and
+   * the tool transparently re-fetched `url` with the same parameters (see
+   * `recovered_from_expired_cursor` on {@link WebFetchToolResult}).
+   */
+  readonly recovered_from_expired_cursor?: boolean;
+
+  /**
+   * Spanish note describing the transparent expired-cursor recovery.
+   */
+  readonly recovery_note?: string;
 }
 
 /**
@@ -497,26 +589,49 @@ export class WebFetchTool {
     }
 
     if (cursor && ranges) {
-      return await this.rangesExecutor.executeGroupedCursorRanges(
-        client,
-        cursor,
-        ranges,
-        maxChars,
-        params.url ?? "(cursor)",
-        signal
-      );
+      let grouped: WebFetchToolRangesResult;
+      try {
+        grouped = await this.rangesExecutor.executeGroupedCursorRanges(
+          client,
+          cursor,
+          ranges,
+          maxChars,
+          params.url ?? "(cursor)",
+          signal
+        );
+      } catch (error) {
+        if (isExpiredCursorError(error) && WebFetchTool.usableRecoveryUrl(params.url)) {
+          return await this.recoverFromExpiredCursor(params, cursor, signal);
+        }
+        throw error;
+      }
+      if (
+        WebFetchTool.allSlicesExpired(grouped) &&
+        WebFetchTool.usableRecoveryUrl(params.url)
+      ) {
+        return await this.recoverFromExpiredCursor(params, cursor, signal);
+      }
+      return grouped;
     }
 
     if (cursor) {
-      const response = await client.webFetch(
-        {
-          cursor,
-          offsetChars: params.offsetChars,
-          limitChars: params.limitChars,
-          maxChars
-        },
-        signal
-      );
+      let response;
+      try {
+        response = await client.webFetch(
+          {
+            cursor,
+            offsetChars: params.offsetChars,
+            limitChars: params.limitChars,
+            maxChars
+          },
+          signal
+        );
+      } catch (error) {
+        if (isExpiredCursorError(error) && WebFetchTool.usableRecoveryUrl(params.url)) {
+          return await this.recoverFromExpiredCursor(params, cursor, signal);
+        }
+        throw error;
+      }
 
       // Early reclamation parity with EnriCode: only a window that actually
       // delivered content through the capture end counts as exhaustion. An
@@ -602,7 +717,13 @@ export class WebFetchTool {
         content,
         includeLinks,
         includeMetadata,
-        anchor: params.anchor
+        anchor: params.anchor,
+        // Screenshots ride only plain full reads: grouped/single local
+        // windows transform the result (ranges projector) and would drop
+        // the captured segments silently.
+        ...(params.screenshot !== undefined && localSliceRanges.length === 0
+          ? { screenshot: params.screenshot }
+          : {})
       },
       signal
     );
@@ -631,11 +752,78 @@ export class WebFetchTool {
       reduced: response.reduced,
       fetched_truncated: response.fetched_truncated,
       page_offset_chars: response.page_offset_chars,
-      page_chars: response.page_chars
+      page_chars: response.page_chars,
+      ...(response.screenshots !== undefined && response.screenshots.length > 0
+        ? { screenshots: response.screenshots }
+        : {}),
+      ...(response.screenshot_status !== undefined ? { screenshot_status: response.screenshot_status } : {}),
+      ...(response.screenshot_reason !== undefined ? { screenshot_reason: response.screenshot_reason } : {})
     };
     return localSliceRanges.length > 0
       ? this.rangesExecutor.applyLocalRangesToResult(single, localSliceRanges, maxChars)
       : single;
+  }
+
+  /**
+   * Reports whether a coexisting `url` can back transparent expired-cursor
+   * recovery (the parser already drops non-http shapes on cursor calls; this
+   * re-checks at the use site so recovery never fires on a display label).
+   *
+   * @param url - Candidate recovery URL.
+   * @returns True for usable http(s) URLs.
+   */
+  private static usableRecoveryUrl(url: string | undefined): url is string {
+    return typeof url === "string" && /^https?:\/\//iu.test(url);
+  }
+
+  /**
+   * Reports whether every slice of a grouped result failed on the same dead
+   * cursor (mid-batch expiry surfaces as error rows, not a throw).
+   *
+   * @param grouped - Grouped-ranges result to inspect.
+   * @returns True when all slices carry the expired-cursor diagnostic.
+   */
+  private static allSlicesExpired(grouped: WebFetchToolRangesResult): boolean {
+    return (
+      grouped.range_count > 0 &&
+      grouped.ranges.every(
+        (slice): boolean => slice.error !== undefined && isExpiredCursorMessageText(slice.error)
+      )
+    );
+  }
+
+  /**
+   * Transparently recovers an expired-cursor read by re-issuing the initial
+   * URL read with the same parameters.
+   *
+   * @remarks
+   * The fresh call drops `cursor`/`action`, so it always terminates: it runs
+   * the regular URL path (npm projection, grouped or local ranges) and the
+   * result is tagged with the recovery marker plus a Spanish note. Offsets in
+   * the returned payload address the fresh capture, which reproduces the dead
+   * one only when the source and projection parameters are unchanged.
+   *
+   * @param params - Original cursor-mode parameters (with recovery URL).
+   * @param expiredCursor - Dead cursor that triggered the recovery.
+   * @param signal - Optional caller abort signal.
+   * @returns Fresh URL-mode result tagged as recovered.
+   */
+  private async recoverFromExpiredCursor(
+    params: WebFetchToolParams,
+    expiredCursor: string,
+    signal?: AbortSignal
+  ): Promise<WebFetchToolExecuteResult> {
+    const freshParams: WebFetchToolParams = { ...params, cursor: undefined, action: undefined };
+    const fresh: WebFetchToolExecuteResult = await this.execute(freshParams, signal);
+    if ("deleted" in fresh) {
+      return fresh;
+    }
+    const freshCursor: unknown = (fresh as WebFetchToolResult).cursor;
+    const hasNewCursor: boolean = typeof freshCursor === "string" && freshCursor.length > 0;
+    const recoveryNote: string =
+      `El cursor anterior expiró en el servidor (TTL ~10 minutos) y el contenido se volvió a obtener de la url con los mismos parámetros; los offsets de esta respuesta aplican a la captura nueva, no a la anterior.` +
+      (hasNewCursor ? ` Continúe con el cursor nuevo; no reintente el anterior (${expiredCursor}).` : ``);
+    return { ...fresh, recovered_from_expired_cursor: true, recovery_note: recoveryNote };
   }
 
   /**

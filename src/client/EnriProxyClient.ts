@@ -80,6 +80,11 @@ export interface WebSearchRequest {
    * Optional search prompt context.
    */
   readonly searchPrompt?: string;
+
+  /**
+   * Optional SearXNG engine selector overriding the proxy default.
+   */
+  readonly engines?: string;
 }
 
 /**
@@ -183,6 +188,12 @@ export interface WebSearchResponse {
   readonly fetched_count?: number;
 
   /**
+   * Spanish note explaining the auto-fetch outcome (e.g. why
+   * `fetched_contents` is empty or partial), when the server reported one.
+   */
+  readonly fetch_note?: string;
+
+  /**
    * Per-query URL groups, when the request used batched queries.
    */
   readonly per_query?: Array<{ query: string; urls: string[] }>;
@@ -233,6 +244,13 @@ export interface WebFetchUrlRequest {
    * Optional anchor selector restricting the projection to one section.
    */
   readonly anchor?: string;
+
+  /**
+   * Optional screenshot request for vision-capable clients: "auto" captures
+   * only when the extracted text is too thin to describe the page, "force"
+   * captures regardless, "none" never captures.
+   */
+  readonly screenshot?: "auto" | "force" | "none";
 }
 
 /**
@@ -439,6 +457,55 @@ export interface WebFetchResponse {
    * Whether the upstream fetch was truncated (download/capture limits).
    */
   readonly fetched_truncated?: boolean;
+
+  /**
+   * Captured page screenshots in scroll order, when a screenshot request
+   * passed the proxy's capture policy.
+   */
+  readonly screenshots?: WebFetchResponseScreenshot[];
+
+  /**
+   * Whether the proxy captured ("captured") or skipped ("skipped")
+   * screenshots for this call.
+   */
+  readonly screenshot_status?: "captured" | "skipped";
+
+  /**
+   * Why screenshots were captured or skipped (e.g. "auto_thin_text",
+   * "forced", "auto_rich_text", "background_verification",
+   * "http_error_status", "capture_failed", "lane_unsupported").
+   */
+  readonly screenshot_reason?: string;
+}
+
+/**
+ * One captured page screenshot segment in a web fetch response.
+ */
+export interface WebFetchResponseScreenshot {
+  /**
+   * Image MIME type (always `image/jpeg`).
+   */
+  readonly mime_type: string;
+
+  /**
+   * Base64-encoded image bytes.
+   */
+  readonly base64: string;
+
+  /**
+   * Image width in pixels.
+   */
+  readonly width: number;
+
+  /**
+   * Image height in pixels.
+   */
+  readonly height: number;
+
+  /**
+   * Window scrollY (pixels) at capture time.
+   */
+  readonly scroll_y: number;
 }
 
 /**
@@ -484,6 +551,40 @@ function normalizeMaxChars(value: unknown): number | undefined {
     return undefined;
   }
   return Math.min(MAX_WIRE_MAX_CHARS, Math.max(1, Math.trunc(value)));
+}
+
+/**
+ * Matches proxy diagnostics reporting a missing or expired web_fetch cursor
+ * (Spanish canonical message plus the legacy English wording).
+ */
+const EXPIRED_CURSOR_DIAGNOSTIC_PATTERN = /cursor (no encontrado|not found|expirado|expired)/i;
+
+/**
+ * Reports whether free text carries an expired/missing cursor diagnostic.
+ *
+ * @param text - Candidate message or response body.
+ * @returns True when the text reports a dead cursor.
+ */
+export function isExpiredCursorMessageText(text: string): boolean {
+  return EXPIRED_CURSOR_DIAGNOSTIC_PATTERN.test(text);
+}
+
+/**
+ * Reports whether a failure is an expired/missing web_fetch cursor.
+ *
+ * @remarks
+ * Only HTTP 400 proxy rejections carrying the cursor diagnostic qualify: a
+ * missing diagnostic (or any other status) is a different failure and must
+ * keep its original error path instead of triggering cursor recovery.
+ *
+ * @param error - Failure thrown by {@link EnriProxyClient.webFetch}.
+ * @returns True for expired-cursor rejections.
+ */
+export function isExpiredCursorError(error: unknown): boolean {
+  if (!(error instanceof EnriProxyHttpError) || error.status !== 400) {
+    return false;
+  }
+  return isExpiredCursorMessageText(`${error.message} ${error.body}`);
 }
 
 /**
@@ -613,6 +714,9 @@ export class EnriProxyClient {
     if (typeof params.searchPrompt === "string" && params.searchPrompt.trim()) {
       payload["search_prompt"] = params.searchPrompt.trim();
     }
+    if (typeof params.engines === "string" && params.engines.trim()) {
+      payload["engines"] = params.engines.trim();
+    }
 
     const result = await this.requestJson("POST", url, payload, this.timeoutMs, signal, options);
     if (result.status < 200 || result.status >= 300) {
@@ -721,6 +825,9 @@ export class EnriProxyClient {
         if (anchor) {
           payload["anchor"] = anchor;
         }
+      }
+      if (params.screenshot === "auto" || params.screenshot === "force" || params.screenshot === "none") {
+        payload["screenshot"] = params.screenshot;
       }
     }
 

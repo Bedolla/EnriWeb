@@ -90,6 +90,12 @@ export function parseWebFetchParams(raw: unknown): WebFetchToolParams {
     optionalInt(obj["limit_chars"]) ?? optionalInt(obj["limitChars"]) ?? optionalInt(obj["limit"]);
   const action: "delete" | undefined = obj["action"] === "delete" ? "delete" : undefined;
   const ranges = parseRanges(obj["ranges"]);
+  // Strict enum parity with the proxy body parser: unknown values degrade
+  // to "not requested" instead of failing the call.
+  const screenshot: "auto" | "force" | "none" | undefined =
+    obj["screenshot"] === "auto" || obj["screenshot"] === "force" || obj["screenshot"] === "none"
+      ? obj["screenshot"]
+      : undefined;
 
   if (action === "delete" && !cursor) {
     throw new Error("action 'delete' requiere 'cursor'.");
@@ -126,7 +132,8 @@ export function parseWebFetchParams(raw: unknown): WebFetchToolParams {
     offsetChars,
     limitChars,
     action,
-    ranges
+    ranges,
+    screenshot
   };
 }
 

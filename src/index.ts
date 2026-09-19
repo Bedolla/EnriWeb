@@ -8,6 +8,7 @@
  */
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { EnriProxyClient, MAX_WIRE_MAX_CHARS } from "./client/EnriProxyClient.js";
+import { parseSearchEnginesEnv, SEARCH_ENGINES_ENV } from "./shared/operatorSearchEngines.js";
 import { WebSearchTool } from "./tools/WebSearchTool.js";
 import { WebFetchTool } from "./tools/WebFetchTool.js";
 import { WebSearchRegistryVerifier } from "./tools/WebSearchRegistryVerifier.js";
@@ -56,21 +57,25 @@ const DEFAULT_ENRIPROXY_URL = "http://127.0.0.1:8787";
  * Default `web_fetch` request timeout in milliseconds.
  *
  * @remarks
- * Exceeds EnriProxy's total fetch budget (150 s) so slow tier chains
- * (CycleTLS floor ~35 s, stealth renders, embedding-reducer cold start)
- * finish before the client gives up; matches EnriCode's 180 s remote fetch
- * budget.
+ * Five minutes: double EnriProxy's total fetch budget (150 s) so slow tier
+ * chains (CycleTLS floor ~35 s, stealth renders, embedding-reducer cold
+ * start) finish before the client gives up. Operator policy is a uniform
+ * 5-minute tool budget for both tools (see DEFAULT_SEARCH_TIMEOUT_MS).
  */
-const DEFAULT_FETCH_TIMEOUT_MS = 180 * 1000;
+const DEFAULT_FETCH_TIMEOUT_MS = 300 * 1000;
 
 /**
  * Default `web_search` request timeout in milliseconds.
  *
  * @remarks
- * Covers the SearXNG budget plus batched queries and server-side auto-fetch,
- * matching EnriCode's remote search budget.
+ * Uniform 5-minute operator tool budget (same as `web_fetch`). Batched
+ * `queries` run in parallel server-side, so they do not multiply the worst
+ * case. Honest residual, recorded by operator order: EnriProxy's SearXNG
+ * budget alone can reach 310 s when slow engines are kept, so a search
+ * slower than 300 s still ends in this retryable timeout; raise
+ * `ENRIWEB_SEARCH_TIMEOUT_MS` to extend it.
  */
-const DEFAULT_SEARCH_TIMEOUT_MS = 320 * 1000;
+const DEFAULT_SEARCH_TIMEOUT_MS = 300 * 1000;
 
 /**
  * Default maximum `web_fetch` content length.
@@ -143,10 +148,11 @@ async function main(): Promise<void> {
     console.log("Variables de entorno:");
     console.log("  ENRIPROXY_URL (opcional, default: http://127.0.0.1:8787)");
     console.log("  ENRIPROXY_API_KEY (requerida)");
-    console.log("  ENRIWEB_TIMEOUT_MS (opcional, default: 180000, timeout de web_fetch)");
-    console.log("  ENRIWEB_SEARCH_TIMEOUT_MS (opcional, default: 320000, timeout de web_search)");
+    console.log("  ENRIWEB_TIMEOUT_MS (opcional, default: 300000, timeout de web_fetch)");
+    console.log("  ENRIWEB_SEARCH_TIMEOUT_MS (opcional, default: 300000, timeout de web_search)");
     console.log("  ENRIWEB_WEB_FETCH_DEFAULT_MAX_CHARS (opcional, default: 200000, máximo 4000000)");
     console.log("  ENRIWEB_GITHUB_TOKEN (opcional, mejora los límites de la API de GitHub)");
+    console.log("  ENRIWEB_SEARCH_ENGINES (opcional, ej: google — motores SearXNG para todas las búsquedas)");
     process.exit(0);
   }
 
@@ -171,6 +177,7 @@ async function main(): Promise<void> {
     MAX_DEFAULT_WEB_FETCH_MAX_CHARS
   );
   const githubToken = (process.env[ENRIWEB_GITHUB_TOKEN_ENV] ?? "").trim();
+  const defaultSearchEngines = parseSearchEnginesEnv(process.env[SEARCH_ENGINES_ENV]);
 
   const createClient = (baseUrl: string, key: string, timeout: number): EnriProxyClient =>
     new EnriProxyClient({
@@ -184,6 +191,7 @@ async function main(): Promise<void> {
     defaultServerUrl: serverUrl,
     defaultApiKey: apiKey,
     defaultTimeoutMs: searchTimeoutMs,
+    defaultEngines: defaultSearchEngines,
     registryVerifier: new WebSearchRegistryVerifier({
       fetchImpl: fetch,
       timeoutMs: DEFAULT_REGISTRY_TIMEOUT_MS,

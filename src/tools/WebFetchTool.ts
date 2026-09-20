@@ -472,6 +472,19 @@ export interface WebFetchToolDeps {
    * `max_chars` is not provided.
    */
   readonly defaultMaxChars: number;
+
+  /**
+   * Installation-level default screenshot mode used when the host omits the
+   * `screenshot` parameter. Explicit host parameters always win.
+   *
+   * @remarks
+   * Set via `ENRIWEB_SCREENSHOT_MODE` for clients whose provider rejects
+   * image blocks in tool results (OpenAI-compatible Chat Completions APIs
+   * accept images in user messages but not in tool messages — e.g. OpenCode
+   * surfaces "this model does not support image input"). `analyze` turns
+   * captures into server-side text descriptions for such installs.
+   */
+  readonly defaultScreenshotMode?: "auto" | "force" | "none" | "analyze";
 }
 
 /**
@@ -734,9 +747,12 @@ export class WebFetchTool {
         anchor: params.anchor,
         // Screenshots ride only plain full reads: grouped/single local
         // windows transform the result (ranges projector) and would drop
-        // the captured segments silently.
-        ...(params.screenshot !== undefined && localSliceRanges.length === 0
-          ? { screenshot: params.screenshot }
+        // the captured segments silently. The installation default covers
+        // hosts that never pass the parameter (blind-vision installs on
+        // OpenAI-compatible backends); explicit host values win.
+        ...((params.screenshot ?? this.deps.defaultScreenshotMode) !== undefined &&
+        localSliceRanges.length === 0
+          ? { screenshot: params.screenshot ?? this.deps.defaultScreenshotMode }
           : {})
       },
       signal

@@ -49,6 +49,15 @@ const ENRIWEB_WEB_FETCH_DEFAULT_MAX_CHARS_ENV =
 const ENRIWEB_GITHUB_TOKEN_ENV = "ENRIWEB_GITHUB_TOKEN";
 
 /**
+ * Installation-level default screenshot mode for `web_fetch` (applies when
+ * the host omits the parameter). Designed for clients whose provider rejects
+ * image blocks inside tool results (OpenAI-compatible Chat Completions) —
+ * `analyze` converts captures to server-side text descriptions.
+ */
+const ENRIWEB_SCREENSHOT_MODE_ENV = "ENRIWEB_SCREENSHOT_MODE";
+const VALID_SCREENSHOT_MODES: ReadonlySet<string> = new Set(["auto", "force", "none", "analyze"]);
+
+/**
  * Default EnriProxy URL used when env is not set.
  */
 const DEFAULT_ENRIPROXY_URL = "http://127.0.0.1:8787";
@@ -201,12 +210,23 @@ async function main(): Promise<void> {
     })
   });
 
+  const defaultScreenshotModeRaw = (process.env[ENRIWEB_SCREENSHOT_MODE_ENV] ?? "").trim().toLowerCase();
+  const defaultScreenshotMode = VALID_SCREENSHOT_MODES.has(defaultScreenshotModeRaw)
+    ? (defaultScreenshotModeRaw as "auto" | "force" | "none" | "analyze")
+    : undefined;
+  if (defaultScreenshotModeRaw.length > 0 && defaultScreenshotMode === undefined) {
+    console.error(
+      `[EnriWeb] Ignoring invalid ${ENRIWEB_SCREENSHOT_MODE_ENV}="${defaultScreenshotModeRaw}" (valid: auto, force, none, analyze)`,
+    );
+  }
+
   const webFetchTool = new WebFetchTool({
     createClient,
     defaultServerUrl: serverUrl,
     defaultApiKey: apiKey,
     defaultTimeoutMs: timeoutMs,
-    defaultMaxChars: defaultWebFetchMaxChars
+    defaultMaxChars: defaultWebFetchMaxChars,
+    defaultScreenshotMode
   });
 
   const server = new EnriWebServer({

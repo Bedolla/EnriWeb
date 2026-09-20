@@ -106,6 +106,8 @@ EnriWeb is configured via environment variables:
   - Parsed as an integer.
 - `ENRIWEB_GITHUB_TOKEN` (`string`, optional)
   - Used for GitHub API enrichment to improve rate limits.
+- `ENRIWEB_SCREENSHOT_MODE` (`string`, optional, one of `auto` | `force` | `none` | `analyze`)
+  - Installation-level default for `web_fetch` screenshots, applied when the host omits the `screenshot` parameter (explicit host values always win). Designed for clients whose provider rejects image blocks inside tool results (OpenAI-compatible Chat Completions APIs accept images in user messages but not in tool messages — e.g. OpenCode surfaces "this model does not support image input" even for vision models). Set `analyze` on such installs: the server captures the page and returns a TEXT description per segment (`screenshot_analyses`) instead of image blocks. Invalid values warn on stderr and are ignored.
 - `ENRIWEB_SEARCH_ENGINES` (`string`, optional, e.g. `google` or `google,bing`)
   - Operator SearXNG engine selector applied to every `web_search` call. Overrides the EnriProxy server default without reconfiguring the server; unset uses the server configuration. This is operator configuration on purpose — the model-facing `web_search` schema exposes no engine option so models cannot narrow their own results. Invalid values warn on stderr and are ignored.
 

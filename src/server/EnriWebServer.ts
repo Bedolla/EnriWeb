@@ -341,6 +341,13 @@ export class EnriWebServer {
   private getWebSearchToolDefinition(): Tool {
     return {
       name: "web_search",
+      title: "Búsqueda web EnriProxy",
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true
+      },
       description:
         "Busca en la web mediante el servicio multi-nivel de EnriProxy.\n" +
         "\n" +
@@ -537,6 +544,13 @@ export class EnriWebServer {
     const defaultMaxChars = this.webFetchTool.getDefaultMaxChars();
     return {
       name: "web_fetch",
+      title: "Lectura de URL EnriProxy",
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true
+      },
       description:
         "Obtiene y lee el contenido de una URL mediante el servicio multi-nivel de EnriProxy.\n" +
         "\n" +

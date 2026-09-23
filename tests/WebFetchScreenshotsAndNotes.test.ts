@@ -198,6 +198,8 @@ describe("WebFetchToolTextFormatter screenshot notes", (): void => {
     const text = WebFetchToolTextFormatter.format(result);
     expect(text).toContain("Capturas de pantalla: 1 segmento(s)");
     expect(text).toContain("1280x800 @scroll 0px");
+    // Blind models get an explicit escape hatch toward the analyze mode.
+    expect(text).toContain('repita esta llamada con screenshot="analyze"');
     // The base64 payload must never leak into the text channel.
     expect(text).not.toContain("ZgFrZQ==");
   });

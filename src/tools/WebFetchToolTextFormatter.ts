@@ -169,7 +169,7 @@ export class WebFetchToolTextFormatter {
       result.screenshot_status === "captured" && result.screenshots !== undefined
         ? `\n\n[Capturas de pantalla: ${String(result.screenshots.length)} segmento(s) JPEG adjuntos como bloques de imagen (${result.screenshots
             .map((segment) => `${String(segment.width)}x${String(segment.height)} @scroll ${String(segment.scroll_y)}px`)
-            .join(", ")}).]`
+            .join(", ")}). Si tu modelo NO puede ver imágenes, estos bloques no le sirven: repita esta llamada con screenshot="analyze" para recibir la descripción textual generada del lado del servidor.]`
         : result.screenshot_status === "analyzed"
           ? `\n\n[Análisis visual de la página (${String(analyzedSegments.length)} segmento(s), generado del lado del servidor):]\n${analyzedSegments
               .map((description, index) =>

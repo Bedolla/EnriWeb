@@ -189,6 +189,7 @@ Inputs:
 - `include_links` (`boolean`, optional, default: `true`; alias `includeLinks`): append the `ENLACES DE LA PÁGINA` inventory with every unique link (label + URL, up to 200) — useful for informed crawling or handing image URLs to URL-capable media analysis tools. Send `false` to omit it.
 - `include_metadata` (`boolean`, optional, default `false`; alias `includeMetadata`): append the `METADATOS DE LA PÁGINA` block with language, author, published date, and `og:image`.
 - `anchor` (`string`, optional): section selector — element id (with or without `#`) or exact heading text; returns only that section up to the next same-or-higher heading. When the section is missing, the response says so and returns the full document.
+- `screenshot` (`"auto" | "force" | "none" | "analyze"`, optional, per-call): page capture request. `"auto"` captures when the page looks visual, `"force"` always captures, `"none"` disables capture for this call, and `"analyze"` returns a TEXT description per screenshot segment (`screenshot_analyses`, server-side vision) instead of image blocks — designed for clients whose provider rejects image blocks inside tool results. Explicit per-call values always win over the installation-level `ENRIWEB_SCREENSHOT_MODE` default.
 
 Outputs (`structuredContent`):
 

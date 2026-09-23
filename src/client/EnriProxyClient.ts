@@ -833,7 +833,12 @@ export class EnriProxyClient {
           payload["anchor"] = anchor;
         }
       }
-      if (params.screenshot === "auto" || params.screenshot === "force" || params.screenshot === "none") {
+      if (
+        params.screenshot === "auto" ||
+        params.screenshot === "force" ||
+        params.screenshot === "none" ||
+        params.screenshot === "analyze"
+      ) {
         payload["screenshot"] = params.screenshot;
       }
     }

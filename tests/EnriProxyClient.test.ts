@@ -359,6 +359,80 @@ describe("EnriProxyClient cursor deletion", () => {
   });
 });
 
+describe("EnriProxyClient web_fetch screenshot wire payload", () => {
+  let server: Server | null = null;
+
+  afterEach(async () => {
+    if (!server) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      try {
+        server?.closeAllConnections();
+        server?.close(() => resolve());
+      } catch {
+        resolve();
+      }
+    });
+    server = null;
+  });
+
+  it.each(["auto", "force", "none", "analyze"] as const)(
+    "forwards screenshot mode %s verbatim on the wire",
+    async (mode) => {
+      let recorded: RecordedRequest | null = null;
+      const started = await startServer(async (req, res) => {
+        recorded = {
+          url: req.url ?? "",
+          method: req.method ?? "",
+          headers: req.headers,
+          body: await readJsonBody(req)
+        };
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ url: "https://example.com/", content: "ok", cursor: "c" }));
+      });
+      server = started.server;
+
+      const client = new EnriProxyClient({
+        baseUrl: started.baseUrl,
+        apiKey: "test-key",
+        timeoutMs: 1000
+      });
+
+      await client.webFetch({ url: "https://example.com/", prompt: "lee", screenshot: mode });
+
+      expect(recorded?.body).toMatchObject({ url: "https://example.com/", screenshot: mode });
+    }
+  );
+
+  it("omits the screenshot key when the caller does not request one", async () => {
+    let recorded: RecordedRequest | null = null;
+    const started = await startServer(async (req, res) => {
+      recorded = {
+        url: req.url ?? "",
+        method: req.method ?? "",
+        headers: req.headers,
+        body: await readJsonBody(req)
+      };
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ url: "https://example.com/", content: "ok", cursor: "c" }));
+    });
+    server = started.server;
+
+    const client = new EnriProxyClient({
+      baseUrl: started.baseUrl,
+      apiKey: "test-key",
+      timeoutMs: 1000
+    });
+
+    await client.webFetch({ url: "https://example.com/", prompt: "lee" });
+
+    expect(recorded?.body).not.toHaveProperty("screenshot");
+  });
+});
+
 describe("EnriProxyClient subfetch abort labeling", () => {
   const startHangingServer = async (): Promise<{ readonly server: Server; readonly baseUrl: string }> =>
     startServer(() => {

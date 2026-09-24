@@ -50,7 +50,7 @@ Example: global install
     "command": "enriweb",
     "args": [],
     "env": {
-      "ENRIPROXY_URL": "http://127.0.0.1:8787",
+      "ENRIPROXY_URL": "http://127.0.0.1:8888",
       "ENRIPROXY_API_KEY": "YOUR_ENRIPROXY_API_KEY"
     }
   }
@@ -66,7 +66,7 @@ Example: no install (always uses whatever npm currently tags as `latest`)
     "command": "npx",
     "args": ["-y", "@bedolla/enriweb@latest"],
     "env": {
-      "ENRIPROXY_URL": "http://127.0.0.1:8787",
+      "ENRIPROXY_URL": "http://127.0.0.1:8888",
       "ENRIPROXY_API_KEY": "YOUR_ENRIPROXY_API_KEY"
     }
   }
@@ -83,7 +83,7 @@ Example: no install (always uses whatever npm currently tags as `latest`)
     "command": "node",
     "args": ["C:\\\\Users\\\\Administrator\\\\Projects\\\\EnriWeb\\\\dist\\\\index.js"],
     "env": {
-      "ENRIPROXY_URL": "http://127.0.0.1:8787",
+      "ENRIPROXY_URL": "http://127.0.0.1:8888",
       "ENRIPROXY_API_KEY": "YOUR_ENRIPROXY_API_KEY"
     }
   }
@@ -96,7 +96,7 @@ Example: no install (always uses whatever npm currently tags as `latest`)
 
 EnriWeb is configured via environment variables:
 
-- `ENRIPROXY_URL` (`string`, optional, default: `http://127.0.0.1:8787`)
+- `ENRIPROXY_URL` (`string`, optional, default: `http://127.0.0.1:8888`)
 - `ENRIPROXY_API_KEY` (`string`, required)
 - `ENRIWEB_TIMEOUT_MS` (`string`, optional, default: `300000`)
   - Parsed as an integer (milliseconds); fetch budget at double the proxy's total fetch budget (150 s) plus margin. Operator policy is a uniform 5-minute tool budget for both tools; when slow SearXNG engines are kept (server budget up to ~310 s), raise `ENRIWEB_SEARCH_TIMEOUT_MS` beyond the 300 s default.

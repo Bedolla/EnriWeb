@@ -60,7 +60,7 @@ const VALID_SCREENSHOT_MODES: ReadonlySet<string> = new Set(["auto", "force", "n
 /**
  * Default EnriProxy URL used when env is not set.
  */
-const DEFAULT_ENRIPROXY_URL = "http://127.0.0.1:8787";
+const DEFAULT_ENRIPROXY_URL = "http://127.0.0.1:8888";
 
 /**
  * Default `web_fetch` request timeout in milliseconds.
@@ -155,7 +155,7 @@ async function main(): Promise<void> {
     console.log("  enriweb --help");
     console.log("");
     console.log("Variables de entorno:");
-    console.log("  ENRIPROXY_URL (opcional, default: http://127.0.0.1:8787)");
+    console.log("  ENRIPROXY_URL (opcional, default: http://127.0.0.1:8888)");
     console.log("  ENRIPROXY_API_KEY (requerida)");
     console.log("  ENRIWEB_TIMEOUT_MS (opcional, default: 300000, timeout de web_fetch)");
     console.log("  ENRIWEB_SEARCH_TIMEOUT_MS (opcional, default: 300000, timeout de web_search)");

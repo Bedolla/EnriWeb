@@ -116,7 +116,11 @@ export class WebSearchRegistryHttpReader {
       Accept: options.accept,
       "User-Agent": "enriweb"
     };
-    if (options.githubToken && options.githubToken.trim()) {
+    // The GitHub token is only useful for (and only ever sent to) GitHub API
+    // hosts: pagination follows `rel="next"` Link targets that come from the
+    // RESPONDER, so an unguarded header would let a compromised or malicious
+    // registry exfiltrate the token by pointing pagination elsewhere.
+    if (options.githubToken && options.githubToken.trim() && WebSearchRegistryHttpReader.isGithubApiUrl(url)) {
       headers["Authorization"] = `Bearer ${options.githubToken.trim()}`;
     }
 
@@ -169,6 +173,30 @@ export class WebSearchRegistryHttpReader {
       throw error;
     } finally {
       clearTimeout(timeout);
+    }
+  }
+
+  /**
+   * Reports whether one URL points at a GitHub API host.
+   *
+   * @remarks
+   * Guards the `Authorization` header: only `api.github.com` and other
+   * `*.github.com` API hosts ever receive the configured GitHub token, so
+   * Link-header pagination can never carry the credential to a third party.
+   *
+   * @param url - Candidate request URL.
+   * @returns True for GitHub API hosts.
+   */
+  private static isGithubApiUrl(url: string): boolean {
+    try {
+      const parsed: URL = new URL(url);
+      if (parsed.protocol !== "https:") {
+        return false;
+      }
+      const host: string = parsed.hostname.toLowerCase();
+      return host === "api.github.com" || host.endsWith(".github.com");
+    } catch {
+      return false;
     }
   }
 

@@ -115,6 +115,88 @@ describe("EnriProxyClient error handling", () => {
     );
   });
 
+  it("surfaces the proxy's typed verdict (message, code, retry hint) on webFetch failures", async () => {
+    server.close();
+    const typed = await startServer((_req, res) => {
+      res.statusCode = 400;
+      res.setHeader("Content-Type", "application/json");
+      res.end(
+        JSON.stringify({
+          error: {
+            type: "invalid_request_error",
+            message: "El dominio no resuelve (DNS): dead-domain.test. Verifica la URL o usa otra fuente.",
+            code: "unresolvable_destination",
+            retryable: false
+          }
+        })
+      );
+    });
+    server = typed.server;
+    const client = new EnriProxyClient({
+      baseUrl: typed.baseUrl,
+      apiKey: "test",
+      timeoutMs: 1000
+    });
+
+    const thrown = await client.webFetch({ url: "https://dead-domain.test/page" }).then(
+      (): null => null,
+      (error: unknown): EnriProxyHttpError => error as EnriProxyHttpError
+    );
+    expect(thrown).toBeInstanceOf(EnriProxyHttpError);
+    expect(thrown?.message).toContain("HTTP 400 [unresolvable_destination]");
+    expect(thrown?.message).toContain("El dominio no resuelve (DNS): dead-domain.test");
+    expect(thrown?.message).toContain("Reintentar la misma URL no cambiará el resultado.");
+  });
+
+  it("marks retryable proxy verdicts as retryable on webSearch failures", async () => {
+    server.close();
+    const typed = await startServer((_req, res) => {
+      res.statusCode = 502;
+      res.setHeader("Content-Type", "application/json");
+      res.end(
+        JSON.stringify({
+          error: {
+            type: "bad_gateway",
+            message: "Origen caído (Cloudflare 521): https://origin-down.test/page",
+            code: "origin_down",
+            retryable: true
+          }
+        })
+      );
+    });
+    server = typed.server;
+    const client = new EnriProxyClient({
+      baseUrl: typed.baseUrl,
+      apiKey: "test",
+      timeoutMs: 1000
+    });
+
+    const thrown = await client.webSearch({ query: "test" }).then(
+      (): null => null,
+      (error: unknown): EnriProxyHttpError => error as EnriProxyHttpError
+    );
+    expect(thrown).toBeInstanceOf(EnriProxyHttpError);
+    expect(thrown?.message).toContain("HTTP 502 [origin_down]");
+    expect(thrown?.message).toContain("Origen caído");
+    expect(thrown?.message).toContain("Es reintentable más tarde.");
+  });
+
+  it("falls back to the bare status line when the body is not a proxy error JSON", async () => {
+    const client = new EnriProxyClient({
+      baseUrl,
+      apiKey: "test",
+      timeoutMs: 1000
+    });
+
+    const thrown = await client.webFetch({ url: "https://example.com" }).then(
+      (): null => null,
+      (error: unknown): EnriProxyHttpError => error as EnriProxyHttpError
+    );
+    expect(thrown).toBeInstanceOf(EnriProxyHttpError);
+    expect(thrown?.message).toContain("El fetch web falló (HTTP 500)");
+    expect(thrown?.message).not.toContain("[");
+  });
+
   it("rejects immediately when the caller signal is already aborted", async () => {
     const client = new EnriProxyClient({
       baseUrl: "http://127.0.0.1:1",

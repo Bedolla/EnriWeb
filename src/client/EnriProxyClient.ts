@@ -636,6 +636,56 @@ export class EnriProxyHttpError extends Error {
 }
 
 /**
+ * Extracted EnriProxy error payload from a non-2xx JSON body.
+ */
+interface ProxyErrorBodyDescriptor {
+  /**
+   * Human-readable message authored by the proxy (Spanish, actionable).
+   */
+  readonly message: string | null;
+
+  /**
+   * Structured failure code (for example `unresolvable_destination`).
+   */
+  readonly code: string | null;
+
+  /**
+   * Whether the proxy says retrying the same request can succeed later.
+   */
+  readonly retryable: boolean | null;
+}
+
+/**
+ * Parses one non-2xx response body into a proxy error descriptor.
+ *
+ * @param body - Raw response body (best-effort UTF-8).
+ * @returns Descriptor fields, null when the body is not a proxy error JSON.
+ */
+function parseProxyErrorBody(body: string): ProxyErrorBodyDescriptor | null {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (typeof parsed !== "object" || parsed === null) {
+      return null;
+    }
+    const errorRecord: unknown = (parsed as Record<string, unknown>)["error"];
+    if (typeof errorRecord !== "object" || errorRecord === null) {
+      return null;
+    }
+    const record: Record<string, unknown> = errorRecord as Record<string, unknown>;
+    const message: unknown = record["message"];
+    const code: unknown = record["code"];
+    const retryable: unknown = record["retryable"];
+    return {
+      message: typeof message === "string" && message.trim().length > 0 ? message.trim() : null,
+      code: typeof code === "string" && code.trim().length > 0 ? code.trim() : null,
+      retryable: typeof retryable === "boolean" ? retryable : null
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Result of a simple HTTP request.
  */
 interface HttpResult {
@@ -728,7 +778,12 @@ export class EnriProxyClient {
     const result = await this.requestJson("POST", url, payload, this.timeoutMs, signal, options);
     if (result.status < 200 || result.status >= 300) {
       throw new EnriProxyHttpError(
-        `La búsqueda web falló (HTTP ${result.status}). ${EnriProxyClient.describeHttpStatus(result.status)}`.trimEnd(),
+        EnriProxyClient.describeProxyHttpFailure(
+          "La búsqueda web falló",
+          result.status,
+          result.body,
+          EnriProxyClient.describeHttpStatus(result.status)
+        ),
         result.status,
         result.headers,
         result.body.slice(0, 4000)
@@ -854,7 +909,12 @@ export class EnriProxyClient {
     const result = await this.requestJson("POST", url, payload, this.timeoutMs, signal, transportOptions);
     if (result.status < 200 || result.status >= 300) {
       throw new EnriProxyHttpError(
-        `El fetch web falló (HTTP ${result.status}). ${EnriProxyClient.describeHttpStatus(result.status)}`.trimEnd(),
+        EnriProxyClient.describeProxyHttpFailure(
+          "El fetch web falló",
+          result.status,
+          result.body,
+          EnriProxyClient.describeHttpStatus(result.status)
+        ),
         result.status,
         result.headers,
         result.body.slice(0, 4000)
@@ -915,6 +975,40 @@ export class EnriProxyClient {
       return "El servidor respondió con una redirección que este cliente no sigue: configure ENRIPROXY_URL con la URL final (sin redirección) y reintente.";
     }
     return "";
+  }
+
+  /**
+   * Composes the model-facing failure line for one non-2xx proxy response.
+   *
+   * @remarks
+   * Prefers the proxy's own typed verdict (message, failure code, retry
+   * hint) when the body carries it, so the model learns WHY the call failed
+   * (dead domain, anti-bot wall, origin down) instead of a bare status code.
+   *
+   * @param lead - Spanish lead matching the failing operation.
+   * @param status - HTTP status code returned by the proxy.
+   * @param body - Raw response body (may carry the proxy error JSON).
+   * @param statusFallback - Status-only fallback note (redirect guidance).
+   * @returns Bounded, single-line failure description.
+   */
+  private static describeProxyHttpFailure(
+    lead: string,
+    status: number,
+    body: string,
+    statusFallback: string
+  ): string {
+    const descriptor: ProxyErrorBodyDescriptor | null = parseProxyErrorBody(body);
+    if (descriptor === null || descriptor.message === null) {
+      return `${lead} (HTTP ${String(status)}). ${statusFallback}`.trimEnd();
+    }
+    const codeSuffix: string = descriptor.code !== null ? ` [${descriptor.code}]` : "";
+    const retryNote: string =
+      descriptor.retryable === true
+        ? " Es reintentable más tarde."
+        : descriptor.retryable === false
+          ? " Reintentar la misma URL no cambiará el resultado."
+          : "";
+    return `${lead} (HTTP ${String(status)}${codeSuffix}): ${descriptor.message}${retryNote}`.trimEnd();
   }
 
   /**

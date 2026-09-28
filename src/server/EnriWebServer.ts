@@ -363,6 +363,7 @@ export class EnriWebServer {
         "- Verificación automática de registros: enriquece los resultados con la última versión estable y prerelease cuando detecta URLs de registros (npm, PyPI, crates.io, NuGet, GitHub)\n" +
         "- Filtrado por dominios (allowlist/blocklist)\n" +
         "- Filtrado por recencia (día/semana/mes/año)\n" +
+        "- Operadores de consulta estilo Google, hechos cumplir por el proxy sobre los resultados: `site:dominio` (solo ese sitio), `-site:dominio` (excluir sitio), `filetype:pdf` o `ext:pdf` (solo archivos con esa extensión — útil para buscar PDFs y otros documentos), `\"frase exacta\"` y `-palabra` (excluir término). Ejemplo: ley imss site:gob.mx filetype:pdf\n" +
         "\n" +
         "Notas:\n" +
         "- Envíe `query` (una consulta) o `queries` (arreglo de 1 a 4). Si envía ambos, se usan `queries`.\n" +
@@ -386,7 +387,7 @@ export class EnriWebServer {
               {
                 type: "string",
                 description:
-                  "Consulta de búsqueda. Sea específico para obtener mejores resultados. También acepta un arreglo de 1 a 4 consultas (equivalente a `queries`). Use `queries` en su lugar cuando convenga lanzar varias formulaciones a la vez."
+                  "Consulta de búsqueda. Operadores que el proxy hace cumplir: site:dominio, -site:dominio, filetype:pdf o ext:pdf (cualquier extensión: docx, xlsx, csv…), \"frase exacta\", -palabra. En lenguaje natural, escribir \"en pdf\"/\"formato pdf\"/\"pdfs\" también filtra PDFs. Ejemplo: ley imss site:gob.mx filetype:pdf. También acepta un arreglo de 1 a 4 consultas (equivalente a `queries`)."
               },
               {
                 type: "array",

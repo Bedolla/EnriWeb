@@ -571,6 +571,7 @@ export class EnriWebServer {
         "- Controles `enri_*` (sufijos que se agregan a la URL): `?enri_find=TEXTO` busca dentro de toda la captura y devuelve las líneas con offsets (ÚSELO PRIMERO en páginas grandes); `?enri_parts=` elige partes: sections,post,ld,imagenes,variantes,media,links,drive,nota,archivos,body (ej: `?enri_parts=links` solo enlaces, omita body para respuestas pequeñas); `?enri_body_offset=N&enri_body_limit=M` ventana del cuerpo en caracteres\n" +
         "- YouTube: `?enri_section=` manifest (por defecto: inventario con instrucciones) | transcripcion | comentarios | descripcion | todo, con `enri_transcript_offset`/`enri_transcript_limit` (caracteres) y `enri_comments_offset`/`enri_comments_limit` (cantidad). Cada corte trae su URL de continuación ya construida\n" +
         "- Carpetas de Google Drive/OneDrive: inventario de archivos con URL de descarga directa por elemento\n" +
+        "- PDFs: cualquier URL de PDF (incluso bitstreams de repositorios tras muros anti-bot) se devuelve como TEXTO EXTRAÍDO (hasta 40 páginas por pasada, con avisos de truncado); los PDFs ESCANEADOS sin capa de texto se transcriben renderizando sus páginas con visión del lado del servidor en la misma respuesta; cuando la transcripción no es posible, la respuesta lo declara y sugiere pasar la misma URL a la herramienta de análisis de media para el análisis completo (multipass: páginas, tablas, diagramas)\n" +
         "- Decodificación de páginas con encoding legado (windows-1252/ISO-8859-1) sin mojibake\n" +
         "\n" +
         "Notas:\n" +

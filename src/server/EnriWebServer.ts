@@ -572,6 +572,7 @@ export class EnriWebServer {
         "- YouTube: `?enri_section=` manifest (por defecto: inventario con instrucciones) | transcripcion | comentarios | descripcion | todo, con `enri_transcript_offset`/`enri_transcript_limit` (caracteres) y `enri_comments_offset`/`enri_comments_limit` (cantidad). Cada corte trae su URL de continuación ya construida\n" +
         "- Carpetas de Google Drive/OneDrive: inventario de archivos con URL de descarga directa por elemento\n" +
         "- PDFs: cualquier URL de PDF (incluso bitstreams de repositorios tras muros anti-bot) se devuelve como TEXTO EXTRAÍDO (hasta 40 páginas por pasada, con avisos de truncado); los PDFs ESCANEADOS sin capa de texto se transcriben renderizando sus páginas con visión del lado del servidor en la misma respuesta; cuando la transcripción no es posible, la respuesta lo declara y sugiere pasar la misma URL a la herramienta de análisis de media para el análisis completo (multipass: páginas, tablas, diagramas)\n" +
+        "- Documentos de Office: URLs o descargas de Word (.docx), Excel (.xlsx) y PowerPoint (.pptx) — incluso tras Content-Disposition o tipos genéricos application/octet-stream — se extraen a TEXTO PLANO en la misma respuesta (párrafos, textos compartidos y valores de celdas, diapositivas en orden); los archivos de texto plano (txt, csv) adjuntos se decodifican directo; un zip sin documento de Office reconocible se declara honestamente\n" +
         "- Decodificación de páginas con encoding legado (windows-1252/ISO-8859-1) sin mojibake\n" +
         "\n" +
         "Notas:\n" +

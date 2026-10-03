@@ -493,7 +493,9 @@ export class WebSearchTool {
     const entries: string[] = result.results.slice(0, RESULTS_SECTION_MAX_ROWS).map((entry, index) => {
       const title = entry.title && entry.title.trim() ? entry.title.trim() : "(Sin título)";
       const snippet =
-        entry.snippet && entry.snippet.trim() ? entry.snippet.trim() : "(Sin extracto)";
+        entry.snippet && entry.snippet.trim()
+          ? entry.snippet.trim()
+          : WebSearchTool.findFetchedSnippet(result.fetchedContents, entry.url);
       const shortTitle: string =
         title.length > RESULT_ENTRY_PREVIEW_CHARS
           ? `${sliceUtf8Safe(title, 0, RESULT_ENTRY_PREVIEW_CHARS)}…`
@@ -622,6 +624,28 @@ export class WebSearchTool {
       parts.push(`[Fuente: ${entry.title}]\n[URL: ${entryUrl}]${cola}${relevanceNote}\n\n${slice}`);
     }
     return { text: parts.join("\n\n---\n\n"), recortado };
+  }
+
+  /**
+   * Finds a fallback snippet from the auto-fetched content when the
+   * search engine returned no snippet for a result.
+   *
+   * @param fetched - Auto-fetched page contents, when any.
+   * @param url - Result URL to match against fetched entries.
+   * @returns First 200 chars of the fetched content, or "(Sin extracto)".
+   */
+  private static findFetchedSnippet(
+    fetched: ReadonlyArray<{ url: string; content: string }> | undefined,
+    url: string
+  ): string {
+    if (fetched !== undefined) {
+      const match = fetched.find((entry: { url: string }): boolean => entry.url === url);
+      if (match !== undefined && match.content.trim().length > 0) {
+        const preview: string = sliceUtf8Safe(match.content.trim(), 0, 200);
+        return `${preview}…`;
+      }
+    }
+    return "(Sin extracto)";
   }
 
   /**

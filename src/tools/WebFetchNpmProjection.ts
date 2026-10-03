@@ -164,7 +164,8 @@ export class WebFetchNpmProjection {
       metadataResponse = await client.webFetch(
         {
           url: metadataUrl,
-          maxChars: Math.min(maxChars, 20000)
+          maxChars: Math.min(maxChars, 20000),
+          screenshot: "none" as const
         },
         subfetchSignal(signal),
         { callerSignal, subfetchTimeoutMs: README_SUBFETCH_TIMEOUT_MS }
@@ -545,6 +546,7 @@ export class WebFetchNpmProjection {
             response = await client.webFetch(
               {
                 url: candidateUrl,
+                screenshot: "none" as const,
                 maxChars,
                 format: projection.format,
                 content: projection.content,

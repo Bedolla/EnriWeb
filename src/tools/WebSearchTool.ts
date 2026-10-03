@@ -106,6 +106,12 @@ export interface WebSearchToolParams {
   readonly query: string;
 
   /**
+   * Alias of `query` accepted by the proxy endpoint for other clients;
+   * `query` wins when both are present.
+   */
+  readonly search_query?: string;
+
+  /**
    * Batched search queries (1-4 non-blank strings). Takes precedence over
    * `query`; exact duplicates collapse after validation.
    */
@@ -216,6 +222,12 @@ export interface WebSearchToolResult extends Record<string, unknown> {
    * Per-query URL groups reported by EnriProxy for batched searches.
    */
   readonly perQuery?: WebSearchPerQueryGroup[];
+
+  /**
+   * Rendered per-query markdown block from the proxy, when batched
+   * (carries titles and snippets — richer than the raw URL groups).
+   */
+  readonly perQueryMarkdown?: string;
 
   /**
    * Optional verified registry data derived from canonical sources.
@@ -397,9 +409,13 @@ export class WebSearchTool {
 
     const client = this.deps.createClient(serverUrl, apiKey, this.deps.defaultTimeoutMs);
 
+    // Alias parity with the proxy endpoint: `search_query` is accepted as
+    // a fallback for `query`.
+    const effectiveQuery: string = params.query ?? params.search_query ?? "";
+
     const response = await client.webSearch(
       {
-        query: params.query,
+        query: effectiveQuery,
         queries: params.queries,
         maxResults: params.maxResults,
         recency: params.recency,
@@ -420,8 +436,8 @@ export class WebSearchTool {
     const verified = await this.deps.registryVerifier.verifyFromSearchResults(results, signal);
 
     return {
-      query: params.query,
-      queries: response.queries ?? params.queries ?? [params.query],
+      query: effectiveQuery,
+      queries: response.queries ?? params.queries ?? [effectiveQuery],
       results,
       count: typeof response.count === "number" ? response.count : results.length,
       failedQueries: response.failed_queries,
@@ -441,7 +457,9 @@ export class WebSearchTool {
         typeof response.fetch_note === "string" && response.fetch_note.length > 0
           ? response.fetch_note
           : undefined,
-      perQuery: response.per_query,
+      perQuery: response.per_query_groups,
+      perQueryMarkdown:
+        typeof response.per_query === "string" && response.per_query.length > 0 ? response.per_query : undefined,
       verified: verified.length > 0 ? verified : undefined
     };
   }
@@ -498,7 +516,12 @@ export class WebSearchTool {
     if (batched) {
       sections.push(`Consultas ejecutadas: ${executedQueries.map((query) => `"${query}"`).join(", ")}.`);
     }
-    if (result.perQuery && result.perQuery.length > 0) {
+    // Rendered-markdown parity with EnriCode: the proxy's per_query block
+    // carries titles+snippets per query heading; it wins over the raw
+    // URL-group projection when present.
+    if (result.perQueryMarkdown !== undefined && result.perQueryMarkdown.length > 0) {
+      sections.push(result.perQueryMarkdown);
+    } else if (result.perQuery && result.perQuery.length > 0) {
       sections.push(WebSearchTool.renderPerQuerySection(result.perQuery));
     }
     if (result.failedQueries && result.failedQueries.length > 0) {

@@ -254,7 +254,8 @@ describe("WebSearchTool.execute", () => {
             results: [{ url: "https://example.com/a", title: "A", snippet: "sa" }],
             count: 1,
             queries: ["q1", "q2"],
-            per_query: [
+            per_query: "### q1\n- [A](<https://example.com/a>)",
+            per_query_groups: [
               { query: "q1", urls: ["https://example.com/a"] },
               { query: "q2", urls: [] }
             ],

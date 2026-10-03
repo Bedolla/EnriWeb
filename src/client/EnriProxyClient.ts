@@ -194,9 +194,15 @@ export interface WebSearchResponse {
   readonly fetch_note?: string;
 
   /**
+   * Rendered per-query markdown block, when the request used batched
+   * queries (canonical wire parity with the EnriCode local plane).
+   */
+  readonly per_query?: string;
+
+  /**
    * Per-query URL groups, when the request used batched queries.
    */
-  readonly per_query?: Array<{ query: string; urls: string[] }>;
+  readonly per_query_groups?: Array<{ query: string; urls: string[] }>;
 }
 
 /**
@@ -430,6 +436,17 @@ export interface WebFetchResponse {
    * Whether more content exists beyond this slice.
    */
   readonly has_more?: boolean;
+
+  /**
+   * Bounded security advisory line, when the proxy detected threat
+   * vocabularies or massive invisible-unicode smuggling.
+   */
+  readonly security_advisory?: string;
+
+  /**
+   * Stable identifiers of the matched threat patterns, when any.
+   */
+  readonly threat_patterns?: string[];
 
   /**
    * Exact offset where the next page starts (cursor reads), when the proxy

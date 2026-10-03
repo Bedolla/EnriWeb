@@ -180,6 +180,17 @@ export interface WebFetchToolResult extends Record<string, unknown> {
   readonly has_more?: boolean;
 
   /**
+   * Bounded security advisory line, when the proxy detected threat
+   * vocabularies or massive invisible-unicode smuggling.
+   */
+  readonly security_advisory?: string;
+
+  /**
+   * Stable identifiers of the matched threat patterns, when any.
+   */
+  readonly threat_patterns?: string[];
+
+  /**
    * Exact offset where the next page starts, when the proxy reports it
    * (cursor reads).
    */
@@ -697,6 +708,12 @@ export class WebFetchTool {
         limit_chars: response.limit_chars,
         total_chars: response.total_chars,
         has_more: response.has_more,
+        // Security-surface parity with EnriCode: the proxy's threat
+        // findings ride the cursor result verbatim.
+        ...(response.security_advisory !== undefined ? { security_advisory: response.security_advisory } : {}),
+        ...(response.threat_patterns !== undefined && response.threat_patterns.length > 0
+          ? { threat_patterns: response.threat_patterns }
+          : {}),
         ...(exhausted ? {} : { next_offset_chars: response.next_offset_chars }),
         reduced: response.reduced,
         fetched_truncated: response.fetched_truncated,
@@ -747,13 +764,17 @@ export class WebFetchTool {
         anchor: params.anchor,
         // Screenshots ride only plain full reads: grouped/single local
         // windows transform the result (ranges projector) and would drop
-        // the captured segments silently. The installation default covers
-        // hosts that never pass the parameter (blind-vision installs on
-        // OpenAI-compatible backends); explicit host values win.
-        ...((params.screenshot ?? this.deps.defaultScreenshotMode) !== undefined &&
-        localSliceRanges.length === 0
-          ? { screenshot: params.screenshot ?? this.deps.defaultScreenshotMode }
-          : {})
+        // the captured segments silently — so windowed reads explicitly
+        // opt OUT (screenshot:"none") instead of leaving the proxy's
+        // absent=auto default capturing segments nobody delivers. The
+        // installation default covers hosts that never pass the parameter
+        // (blind-vision installs on OpenAI-compatible backends); explicit
+        // host values win on plain reads.
+        ...(localSliceRanges.length > 0
+          ? { screenshot: "none" as const }
+          : (params.screenshot ?? this.deps.defaultScreenshotMode) !== undefined
+            ? { screenshot: params.screenshot ?? this.deps.defaultScreenshotMode }
+            : {})
       },
       signal
     );
@@ -779,6 +800,12 @@ export class WebFetchTool {
       total_chars: response.total_chars,
       has_more: response.has_more,
       next_offset_chars: response.next_offset_chars,
+      // Security-surface parity with EnriCode: advisory and matched threat
+      // identifiers ride the result verbatim.
+      ...(response.security_advisory !== undefined ? { security_advisory: response.security_advisory } : {}),
+      ...(response.threat_patterns !== undefined && response.threat_patterns.length > 0
+        ? { threat_patterns: response.threat_patterns }
+        : {}),
       reduced: response.reduced,
       fetched_truncated: response.fetched_truncated,
       page_offset_chars: response.page_offset_chars,

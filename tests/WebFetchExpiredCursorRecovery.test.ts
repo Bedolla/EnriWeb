@@ -105,7 +105,7 @@ describe("WebFetchTool expired-cursor recovery", () => {
     expect(result.recovered_from_expired_cursor).toBe(true);
     expect(result.recovery_note).toContain("cursor nuevo");
     const urlCall = calls[1];
-    expect(urlCall).toMatchObject({ url: URL, format: "text", content: "main", includeLinks: true });
+    expect(urlCall).toMatchObject({ url: URL, format: "text", content: "main", includeLinks: false });
   });
 
   it("keeps the requested window when recovering a cursor read with offset/limit", async () => {

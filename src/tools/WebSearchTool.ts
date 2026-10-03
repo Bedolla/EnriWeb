@@ -541,7 +541,7 @@ export class WebSearchTool {
       );
     }
     if (result.fetchedContents && result.fetchedContents.length > 0) {
-      const rendered = WebSearchTool.renderFetchedContents(result.fetchedContents);
+      const rendered = WebSearchTool.renderFetchedContents(result.fetchedContents, result.query);
       sections.push(
         `CONTENIDOS DE PÁGINA VERIFICADOS (${result.fetchedContents.length}${rendered.recortado ? ", recortados para vista previa" : ""}):\n\n${rendered.text}`
       );
@@ -589,27 +589,62 @@ export class WebSearchTool {
    * @returns Capped text plus whether any content was cut.
    */
   private static renderFetchedContents(
-    contents: ReadonlyArray<{ title: string; url: string; content: string; truncated: boolean }>
+    contents: ReadonlyArray<{ title: string; url: string; content: string; truncated: boolean }>,
+    query?: string
   ): { text: string; recortado: boolean } {
     let budget: number = FETCHED_CONTENTS_TOTAL_CHARS;
     let recortado = false;
     const parts: string[] = [];
+    // Relevance filter: query keywords steer the per-entry preview budget.
+    // A fetched page whose content mentions none of the query's
+    // distinctive terms gets a 200-char stub with a note instead of the
+    // full 2000-char preview (search engines occasionally surface
+    // topically irrelevant pages whose full preview wastes model tokens).
+    const queryTerms: ReadonlyArray<string> = WebSearchTool.extractQueryTerms(query);
     for (const entry of contents) {
       if (budget <= 0) {
         recortado = true;
         break;
       }
-      const slice: string = sliceUtf8Safe(entry.content, 0, Math.min(FETCHED_CONTENT_PREVIEW_CHARS, budget));
+      const relevant: boolean =
+        queryTerms.length === 0 ||
+        queryTerms.some((term: string): boolean => entry.content.toLowerCase().includes(term));
+      const entryCap: number = relevant ? FETCHED_CONTENT_PREVIEW_CHARS : 200;
+      const slice: string = sliceUtf8Safe(entry.content, 0, Math.min(entryCap, budget));
       if (slice.length < entry.content.length) {
         recortado = true;
       }
       budget -= slice.length;
+      const relevanceNote: string = relevant ? "" : " [contenido sin relación aparente con la consulta — preview mínimo]";
       const cola: string = entry.truncated || slice.length < entry.content.length ? " [recortado]" : "";
       const entryUrl: string =
         typeof entry.url === "string" && entry.url.trim().length > 0 ? entry.url.trim() : "(sin URL)";
-      parts.push(`[Fuente: ${entry.title}]\n[URL: ${entryUrl}]${cola}\n\n${slice}`);
+      parts.push(`[Fuente: ${entry.title}]\n[URL: ${entryUrl}]${cola}${relevanceNote}\n\n${slice}`);
     }
     return { text: parts.join("\n\n---\n\n"), recortado };
+  }
+
+  /**
+   * Extracts distinctive lowercase terms from a search query for the
+   * fetched-content relevance filter.
+   *
+   * @param query - Original query text.
+   * @returns Lowercase terms of 3+ chars, stopwords removed.
+   */
+  private static extractQueryTerms(query: string | undefined): ReadonlyArray<string> {
+    if (typeof query !== "string" || query.trim().length === 0) {
+      return [];
+    }
+    const stop: ReadonlySet<string> = new Set<string>([
+      "the", "and", "for", "with", "this", "that", "from", "your", "you", "are", "was",
+      "que", "con", "para", "por", "del", "las", "los", "una", "como", "sus", "has",
+      "de", "el", "la", "y", "o", "en", "al", "es", "un", "una",
+    ]);
+    return query
+      .toLowerCase()
+      .split(/[^a-z0-9áéíóúüñ]+/giu)
+      .filter((term: string): boolean => term.length >= 3 && !stop.has(term))
+      .slice(0, 12);
   }
 
   /**

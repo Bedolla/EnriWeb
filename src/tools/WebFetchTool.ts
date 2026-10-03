@@ -589,7 +589,7 @@ export class WebFetchTool {
     // in WebFetchService.projectHtml): main scope with link inventory on.
     const format: "text" | "markdown" | "html" = params.format ?? "text";
     const content: "main" | "full" = params.content ?? "main";
-    const includeLinks: boolean = params.includeLinks ?? true;
+    const includeLinks: boolean = params.includeLinks ?? false;
     const includeMetadata: boolean = params.includeMetadata ?? false;
     const cursor: string | undefined =
       typeof params.cursor === "string" && params.cursor.trim() ? params.cursor.trim() : undefined;

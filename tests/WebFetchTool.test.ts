@@ -452,7 +452,7 @@ describe("WebFetchTool.execute", () => {
       url: "https://example.com/docs",
       format: "text",
       content: "main",
-      includeLinks: true,
+      includeLinks: false,
       includeMetadata: false
     });
   });

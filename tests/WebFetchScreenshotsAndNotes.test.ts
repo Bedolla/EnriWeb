@@ -45,9 +45,13 @@ describe("parseWebFetchParams screenshot", (): void => {
     }
   });
 
-  it("degrades unknown and non-string values to undefined", (): void => {
-    expect(parseWebFetchParams({ url: "https://example.test", screenshot: "always" }).screenshot).toBeUndefined();
-    expect(parseWebFetchParams({ url: "https://example.test", screenshot: 1 }).screenshot).toBeUndefined();
+  it("rejects unknown and non-string values with the valid list", (): void => {
+    expect(() => parseWebFetchParams({ url: "https://example.test", screenshot: "always" })).toThrow(
+      /screenshot inválido: "always". Valores aceptados: auto, none, force, analyze/
+    );
+    expect(() => parseWebFetchParams({ url: "https://example.test", screenshot: 1 })).toThrow(
+      /screenshot inválido: 1/
+    );
     expect(parseWebFetchParams({ url: "https://example.test" }).screenshot).toBeUndefined();
   });
 });
@@ -198,10 +202,36 @@ describe("WebFetchToolTextFormatter screenshot notes", (): void => {
     const text = WebFetchToolTextFormatter.format(result);
     expect(text).toContain("Capturas de pantalla: 1 segmento(s)");
     expect(text).toContain("1280x800 @scroll 0px");
+    // The note names the real capture format instead of assuming JPEG.
+    expect(text).toContain("en image/jpeg adjuntos");
     // Blind models get an explicit escape hatch toward the analyze mode.
     expect(text).toContain('repita esta llamada con screenshot="analyze"');
     // The base64 payload must never leak into the text channel.
     expect(text).not.toContain("ZgFrZQ==");
+  });
+
+  it("names the real proxy capture format (webp) without assuming JPEG", (): void => {
+    const result = {
+      content: "PERRABBIT",
+      status: 200,
+      content_type: "text/plain",
+      truncated: false,
+      url: "https://enrirego.test",
+      screenshot_status: "captured" as const,
+      screenshots: [
+        { mime_type: "image/webp", base64: "d2VicDE=", width: 1280, height: 800, scroll_y: 0 },
+        { mime_type: "image/webp", base64: "d2VicDI=", width: 1280, height: 800, scroll_y: 800 }
+      ]
+    } as WebFetchToolResult;
+    const text = WebFetchToolTextFormatter.format(result);
+    expect(text).toContain("Capturas de pantalla: 2 segmento(s)");
+    // Formats are deduplicated from the segments' real mime types.
+    expect(text).toContain("en image/webp adjuntos como bloques de imagen");
+    expect(text.match(/image\/webp/g)?.length).toBe(1);
+    expect(text).not.toContain("JPEG");
+    expect(text).toContain("1280x800 @scroll 0px");
+    expect(text).toContain("1280x800 @scroll 800px");
+    expect(text).not.toContain("d2VicDE=");
   });
 
   it("explains skipped screenshots", (): void => {
@@ -245,5 +275,86 @@ describe("WebSearchTool fetch_note passthrough", (): void => {
 describe("resolveMaxResponseBytes screenshot headroom", (): void => {
   it("keeps the documented floor for small budgets", (): void => {
     expect(resolveMaxResponseBytes(undefined)).toBe(20 * 1024 * 1024);
+  });
+});
+
+describe("EnriProxyClient.webFetch cursor wire fields", (): void => {
+  it("forwards prompt and screenshot on cursor reads (server-side window parity)", async (): Promise<void> => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const server = createServer((req, res): void => {
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk: Buffer): void => {
+        chunks.push(chunk);
+      });
+      req.on("end", (): void => {
+        bodies.push(JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>);
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({ content: "x", status: 200, content_type: "text/plain", truncated: false })
+        );
+      });
+    });
+    await new Promise<void>((resolve): void => {
+      server.listen(0, "127.0.0.1", (): void => {
+        resolve();
+      });
+    });
+    const address = server.address();
+    const port: number = typeof address === "object" && address !== null ? address.port : 0;
+    try {
+      const client = new EnriProxyClient({ baseUrl: "http://127.0.0.1:" + String(port), apiKey: "key", timeoutMs: 5000 });
+      await client.webFetch(
+        {
+          cursor: "123e4567-e89b-12d3-a456-426614174000",
+          prompt: "extrae las alpha lines",
+          screenshot: "force"
+        },
+        undefined
+      );
+    } finally {
+      await new Promise<void>((resolve): void => {
+        server.close((): void => {
+          resolve();
+        });
+      });
+    }
+    expect(bodies[0]?.["prompt"]).toBe("extrae las alpha lines");
+    expect(bodies[0]?.["screenshot"]).toBe("force");
+  });
+
+  it("omits prompt and screenshot on cursor reads when the host did not pass them", async (): Promise<void> => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const server = createServer((req, res): void => {
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk: Buffer): void => {
+        chunks.push(chunk);
+      });
+      req.on("end", (): void => {
+        bodies.push(JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>);
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({ content: "x", status: 200, content_type: "text/plain", truncated: false })
+        );
+      });
+    });
+    await new Promise<void>((resolve): void => {
+      server.listen(0, "127.0.0.1", (): void => {
+        resolve();
+      });
+    });
+    const address = server.address();
+    const port: number = typeof address === "object" && address !== null ? address.port : 0;
+    try {
+      const client = new EnriProxyClient({ baseUrl: "http://127.0.0.1:" + String(port), apiKey: "key", timeoutMs: 5000 });
+      await client.webFetch({ cursor: "123e4567-e89b-12d3-a456-426614174000" }, undefined);
+    } finally {
+      await new Promise<void>((resolve): void => {
+        server.close((): void => {
+          resolve();
+        });
+      });
+    }
+    expect("prompt" in (bodies[0] ?? {})).toBe(false);
+    expect("screenshot" in (bodies[0] ?? {})).toBe(false);
   });
 });

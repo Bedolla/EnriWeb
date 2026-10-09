@@ -40,7 +40,6 @@ describe("WebSearchTool.parseParams", () => {
 
     const params = tool.parseParams({
       query: "typescript best practices",
-      max_results: "7",
       recency: "oneMonth",
       allowed_domains: ["developer.mozilla.org", "www.typescriptlang.org"],
       blocked_domains: ["example.com"],
@@ -48,7 +47,7 @@ describe("WebSearchTool.parseParams", () => {
     });
 
     expect(params.query).toBe("typescript best practices");
-    expect(params.maxResults).toBe(7);
+    expect(params).not.toHaveProperty("maxResults");
     expect(params.recency).toBe("oneMonth");
     expect(params.allowedDomains?.length).toBe(2);
     expect(params.blockedDomains?.length).toBe(1);
@@ -69,7 +68,7 @@ describe("WebSearchTool.parseParams", () => {
     expect(() => tool.parseParams({ query: "test", recency: "yesterday" })).toThrow(/recency/i);
   });
 
-  it("rejects invalid max_results", () => {
+  it("rejects unknown parameters with the accepted list (count params get the server-count hint)", () => {
     const tool = new WebSearchTool({
       createClient: () => {
         throw new Error("not used");
@@ -80,9 +79,11 @@ describe("WebSearchTool.parseParams", () => {
       registryVerifier: createRegistryVerifierStub()
     });
 
-    expect(tool.parseParams({ query: "test", max_results: 0 }).maxResults).toBeUndefined();
-    expect(tool.parseParams({ query: "test", max_results: -5 }).maxResults).toBeUndefined();
-    expect(tool.parseParams({ query: "test", max_results: 30 }).maxResults).toBe(30);
+    expect(() => tool.parseParams({ query: "test", max_results: 0 })).toThrow(/Parámetro no reconocido: max_results/);
+    expect(() => tool.parseParams({ query: "test", max_results: -5 })).toThrow(/El número de resultados lo decide el servidor/);
+    expect(() => tool.parseParams({ query: "test", maxResults: 30 })).toThrow(/Parámetros aceptados/);
+    expect(() => tool.parseParams({ query: "test", frobnicate: 1 })).toThrow(/Parámetro no reconocido: frobnicate/);
+    expect(() => tool.parseParams({ query: "test" })).not.toThrow();
   });
 
   it("aligns the queries contract with EnriProxy (empty array falls back, bad containers fail)", () => {
@@ -278,5 +279,21 @@ describe("WebSearchTool.execute", () => {
       { query: "q2", urls: [] }
     ]);
     expect(result.fetchedCount).toBe(0);
+  });
+
+  it("rejects unknown count parameters without historical framing", (): void => {
+    const tool = new WebSearchTool({
+      createClient: () => {
+        throw new Error("client must not be built for a rejected call");
+      },
+      defaultServerUrl: "http://127.0.0.1:8787",
+      defaultApiKey: "test",
+      defaultTimeoutMs: 1000,
+      registryVerifier: createRegistryVerifierStub()
+    });
+
+    expect(() => tool.parseParams({ query: "q", max_results: 2 })).toThrow(/Parámetro no reconocido: max_results/);
+    expect(() => tool.parseParams({ query: "q", maxResults: 2 })).toThrow(/Parámetro no reconocido: maxResults/);
+    expect(() => tool.parseParams({ query: "q" })).not.toThrow();
   });
 });

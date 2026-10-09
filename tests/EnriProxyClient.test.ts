@@ -254,7 +254,6 @@ describe("EnriProxyClient request payloads", () => {
 
     await client.webSearch({
       query: "enrirego github url",
-      maxResults: 5,
       recency: "oneMonth",
       allowedDomains: ["github.com"],
       blockedDomains: ["example.com"],
@@ -267,7 +266,6 @@ describe("EnriProxyClient request payloads", () => {
     expect(recorded?.headers.authorization).toBe("Bearer test-key");
     expect(recorded?.body).toMatchObject({
       query: "enrirego github url",
-      max_results: 5,
       recency: "oneMonth",
       allowed_domains: ["github.com"],
       blocked_domains: ["example.com"],

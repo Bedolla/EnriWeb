@@ -6,7 +6,8 @@
  * defaults, matching the EnriCode client parser: unusable or out-of-domain
  * budgets fall back to the documented default instead of failing the call,
  * per the shared AR-4 client policy) but strict for structural mistakes
- * (broken ranges, unknown action without cursor), which fail fast in
+ * (broken ranges, unknown action without cursor, argument keys outside the
+ * accepted set), which fail fast in
  * Spanish. Snake_case field names
  * are canonical; camelCase aliases (maxChars, offsetChars, limitChars,
  * includeLinks, includeMetadata) are accepted as fallbacks for parity with
@@ -16,18 +17,59 @@
  * @module tools/WebFetchParamsParser
  */
 
-import { assertHttpUrl, assertObject, optionalInt, optionalString } from "../shared/validation.js";
+import { assertHttpUrl, assertObject, optionalString, strictOptionalInt } from "../shared/validation.js";
 import { sliceUtf8Safe } from "../shared/Utf8SafeTextSlicer.js";
 import { MAX_ANCHOR_CHARS, MAX_TOOL_RANGES, type WebFetchToolParams, type WebFetchRangeSpec } from "./WebFetchTool.js";
+
+/**
+ * Argument keys accepted by the web_fetch tool (mirrors the fields this
+ * parser actually reads; snake_case canonical plus camelCase aliases).
+ */
+const ACCEPTED_FETCH_PARAM_KEYS: readonly string[] = [
+  "url",
+  "cursor",
+  "action",
+  "prompt",
+  "ranges",
+  "offset",
+  "offset_chars",
+  "offsetChars",
+  "limit",
+  "limit_chars",
+  "limitChars",
+  "max_chars",
+  "maxChars",
+  "format",
+  "content",
+  "include_links",
+  "includeLinks",
+  "include_metadata",
+  "includeMetadata",
+  "anchor",
+  "screenshot"
+];
 
 /**
  * Validates raw MCP tool arguments.
  *
  * @param raw - Raw tool arguments
  * @returns Validated parameters
+ * @throws Error when a key outside the accepted set arrives (hallucinated
+ *   parameters silently ignored would read as "request honored").
  */
 export function parseWebFetchParams(raw: unknown): WebFetchToolParams {
   const obj = assertObject(raw, "arguments");
+
+  // Unknown-parameter guard (web_search parity): any key outside the
+  // accepted set rejects listing what IS accepted.
+  const unknownParamKeys: string[] = Object.keys(obj).filter(
+    (key: string): boolean => !ACCEPTED_FETCH_PARAM_KEYS.includes(key)
+  );
+  if (unknownParamKeys.length > 0) {
+    throw new Error(
+      `Parámetro no reconocido: ${unknownParamKeys.join(", ")}. Parámetros aceptados: url, cursor, action, prompt, ranges (array de {offsetChars, limitChars}), anchor, offset/offsetChars/offset_chars, limit/limitChars/limit_chars, maxChars/max_chars, format (text|markdown|html), content (main|full), includeLinks/include_links, includeMetadata/include_metadata, screenshot (auto|none|force|analyze).`
+    );
+  }
 
   const cursorRaw = optionalString(obj["cursor"]);
   const cursor = cursorRaw?.trim() ? cursorRaw.trim() : undefined;
@@ -54,21 +96,36 @@ export function parseWebFetchParams(raw: unknown): WebFetchToolParams {
 
   const prompt = optionalString(obj["prompt"]);
   // max_chars is canonical; maxChars is the camelCase alias accepted for
-  // parity with the EnriCode tool surface.
-  let maxChars = optionalInt(obj["max_chars"]) ?? optionalInt(obj["maxChars"]);
-  // Invalid format/content values degrade to the documented defaults
-  // ("text"/"main") instead of failing the call, matching EnriCode and
-  // EnriProxy projection fallbacks.
+  // parity with the EnriCode tool surface. Present-but-corrupt integers
+  // (floats, "abc", booleans) REJECT with coaching — the legacy silent
+  // floor/ignore made the model believe its window was honored.
+  let maxChars =
+    strictOptionalInt(obj["max_chars"], "max_chars/maxChars")
+    ?? strictOptionalInt(obj["maxChars"], "max_chars/maxChars");
+  // Strict enum parity with the proxy body parser and the EnriCode record:
+  // a present, non-blank format/content outside the documented enum
+  // REJECTS with the valid values instead of silently degrading to the
+  // default (silent "xml"->text reads as "format honored").
+  const formatRaw: unknown = obj["format"];
+  if (formatRaw !== undefined && formatRaw !== null && !(typeof formatRaw === "string" && formatRaw.trim() === "")) {
+    if (formatRaw !== "text" && formatRaw !== "markdown" && formatRaw !== "html") {
+      const rendered: string = typeof formatRaw === "string" ? `"${formatRaw.trim()}"` : String(formatRaw);
+      throw new Error(`format inválido: ${rendered}. Valores aceptados: text, markdown, html.`);
+    }
+  }
   const format: "text" | "markdown" | "html" | undefined =
-    obj["format"] === "markdown"
-      ? "markdown"
-      : obj["format"] === "text"
-        ? "text"
-        : obj["format"] === "html"
-          ? "html"
-          : undefined;
+    formatRaw === "markdown" || formatRaw === "text" || formatRaw === "html"
+      ? (formatRaw as "text" | "markdown" | "html")
+      : undefined;
+  const contentRaw: unknown = obj["content"];
+  if (contentRaw !== undefined && contentRaw !== null && !(typeof contentRaw === "string" && contentRaw.trim() === "")) {
+    if (contentRaw !== "main" && contentRaw !== "full") {
+      const rendered: string = typeof contentRaw === "string" ? `"${contentRaw.trim()}"` : String(contentRaw);
+      throw new Error(`content inválido: ${rendered}. Valores aceptados: main, full.`);
+    }
+  }
   const content: "main" | "full" | undefined =
-    obj["content"] === "main" ? "main" : obj["content"] === "full" ? "full" : undefined;
+    contentRaw === "main" || contentRaw === "full" ? (contentRaw as "main" | "full") : undefined;
   const includeLinks: boolean | undefined =
     obj["include_links"] === true || obj["includeLinks"] === true
       ? true
@@ -85,19 +142,37 @@ export function parseWebFetchParams(raw: unknown): WebFetchToolParams {
   const anchorClean = anchorRaw ? sliceUtf8Safe(anchorRaw.trim().replace(/^#+/, "").trim(), 0, MAX_ANCHOR_CHARS) : "";
   const anchor = anchorClean ? anchorClean : undefined;
   const offsetCharsRaw =
-    optionalInt(obj["offset_chars"]) ?? optionalInt(obj["offsetChars"]) ?? optionalInt(obj["offset"]);
+    strictOptionalInt(obj["offset_chars"], "offset_chars/offsetChars/offset")
+    ?? strictOptionalInt(obj["offsetChars"], "offset_chars/offsetChars/offset")
+    ?? strictOptionalInt(obj["offset"], "offset_chars/offsetChars/offset");
   const limitCharsRaw =
-    optionalInt(obj["limit_chars"]) ?? optionalInt(obj["limitChars"]) ?? optionalInt(obj["limit"]);
+    strictOptionalInt(obj["limit_chars"], "limit_chars/limitChars/limit")
+    ?? strictOptionalInt(obj["limitChars"], "limit_chars/limitChars/limit")
+    ?? strictOptionalInt(obj["limit"], "limit_chars/limitChars/limit");
   const action: "delete" | undefined = obj["action"] === "delete" ? "delete" : undefined;
   const ranges = parseRanges(obj["ranges"]);
-  // Strict enum parity with the proxy body parser: unknown values degrade
-  // to "not requested" instead of failing the call.
+  // Strict enum parity with the proxy body parser and the EnriCode record:
+  // a present, non-blank screenshot mode outside the enum REJECTS with the
+  // valid values (silent degrade read as "mode honored").
+  const screenshotRaw: unknown = obj["screenshot"];
+  if (
+    screenshotRaw !== undefined
+    && screenshotRaw !== null
+    && !(typeof screenshotRaw === "string" && screenshotRaw.trim() === "")
+  ) {
+    if (
+      screenshotRaw !== "auto"
+      && screenshotRaw !== "force"
+      && screenshotRaw !== "none"
+      && screenshotRaw !== "analyze"
+    ) {
+      const rendered: string = typeof screenshotRaw === "string" ? `"${screenshotRaw.trim()}"` : String(screenshotRaw);
+      throw new Error(`screenshot inválido: ${rendered}. Valores aceptados: auto, none, force, analyze (u omítelo para usar el default).`);
+    }
+  }
   const screenshot: "auto" | "force" | "none" | "analyze" | undefined =
-    obj["screenshot"] === "auto" ||
-    obj["screenshot"] === "force" ||
-    obj["screenshot"] === "none" ||
-    obj["screenshot"] === "analyze"
-      ? obj["screenshot"]
+    screenshotRaw === "auto" || screenshotRaw === "force" || screenshotRaw === "none" || screenshotRaw === "analyze"
+      ? (screenshotRaw as "auto" | "force" | "none" | "analyze")
       : undefined;
 
   if (action === "delete" && !cursor) {
@@ -161,20 +236,41 @@ function parseRanges(raw: unknown): WebFetchRangeSpec[] | undefined {
   }
 
   const collected: WebFetchRangeSpec[] = [];
-  for (const entry of raw) {
+  for (const [index, entry] of raw.entries()) {
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
-      throw new Error("cada rango en ranges debe ser un objeto {offset_chars, limit_chars}.");
+      throw new Error(`rango inválido en la posición ${index + 1}: cada rango debe ser un objeto {offset_chars, limit_chars}.`);
     }
     const record = entry as Record<string, unknown>;
+    const hasOffsetKey: boolean =
+      record["offset_chars"] !== undefined
+      || record["offsetChars"] !== undefined
+      || record["offset"] !== undefined;
+    const hasLimitKey: boolean =
+      record["limit_chars"] !== undefined
+      || record["limitChars"] !== undefined
+      || record["limit"] !== undefined;
+    // A broken item ({} or corrupt ints) must NOT silently collapse into an
+    // offset-0 window — several broken items used to duplicate that ghost
+    // window without any notice (live-audit V finding).
+    if (!hasOffsetKey && !hasLimitKey) {
+      throw new Error(
+        `rango inválido en la posición ${index + 1}: falta offset_chars/offsetChars (u offset). Envía {offsetChars: <entero>, limitChars: <entero opcional>}.`,
+      );
+    }
     const offsetChars: number =
-      optionalInt(record["offset_chars"]) ?? optionalInt(record["offsetChars"]) ?? optionalInt(record["offset"]) ?? 0;
+      strictOptionalInt(record["offset_chars"], `ranges[${index}].offset_chars`)
+      ?? strictOptionalInt(record["offsetChars"], `ranges[${index}].offsetChars`)
+      ?? strictOptionalInt(record["offset"], `ranges[${index}].offset`)
+      ?? 0;
     const limitRaw: number | undefined =
-      optionalInt(record["limit_chars"]) ?? optionalInt(record["limitChars"]) ?? optionalInt(record["limit"]);
+      strictOptionalInt(record["limit_chars"], `ranges[${index}].limit_chars`)
+      ?? strictOptionalInt(record["limitChars"], `ranges[${index}].limitChars`)
+      ?? strictOptionalInt(record["limit"], `ranges[${index}].limit`);
     if (offsetChars < 0) {
-      throw new Error("offset_chars de cada rango debe ser no negativo.");
+      throw new Error(`ranges[${index}].offset_chars debe ser no negativo.`);
     }
     if (limitRaw !== undefined && limitRaw < 0) {
-      throw new Error("limit_chars de cada rango debe ser positivo.");
+      throw new Error(`ranges[${index}].limit_chars debe ser positivo.`);
     }
     collected.push({
       offsetChars,

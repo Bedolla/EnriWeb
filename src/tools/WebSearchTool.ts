@@ -23,7 +23,6 @@ import {
   assertHttpUrl,
   assertNonEmptyString,
   assertObject,
-  optionalInt,
   optionalString,
   optionalStringArray
 } from "../shared/validation.js";
@@ -116,11 +115,6 @@ export interface WebSearchToolParams {
    * `query`; exact duplicates collapse after validation.
    */
   readonly queries?: string[];
-
-  /**
-   * Maximum number of results.
-   */
-  readonly maxResults?: number;
 
   /**
    * Recency filter.
@@ -318,8 +312,32 @@ export class WebSearchTool {
     }
 
     // snake_case names are canonical; camelCase aliases are accepted as
-    // fallbacks for parity with the EnriCode tool surface.
-    let maxResults = optionalInt(obj["max_results"]) ?? optionalInt(obj["maxResults"]);
+    // fallbacks for parity with the EnriCode tool surface. Any key outside
+    // the accepted set rejects with the valid list — silently ignoring
+    // hallucinated parameters would read as "request honored".
+    const acceptedSearchParamKeys: readonly string[] = [
+      "query",
+      "queries",
+      "recency",
+      "allowed_domains",
+      "allowedDomains",
+      "blocked_domains",
+      "blockedDomains",
+      "search_prompt",
+      "searchPrompt"
+    ];
+    const unknownParamKeys: string[] = Object.keys(obj).filter(
+      (key: string): boolean => !acceptedSearchParamKeys.includes(key)
+    );
+    if (unknownParamKeys.length > 0) {
+      const countHint: boolean = unknownParamKeys.some((key: string): boolean =>
+        /max|limit|num|count|result|top/iu.test(key)
+      );
+      throw new Error(
+        `Parámetro no reconocido: ${unknownParamKeys.join(", ")}. Parámetros aceptados: query (string o lote de 1 a 4), queries, recency (oneDay|oneWeek|oneMonth|oneYear|noLimit), allowedDomains/allowed_domains, blockedDomains/blocked_domains, searchPrompt/search_prompt.`
+        + (countHint ? " El número de resultados lo decide el servidor; no es configurable por petición." : ""),
+      );
+    }
     const recencyRaw = optionalString(obj["recency"]);
     const allowedDomains =
       optionalStringArray(obj["allowed_domains"], "allowed_domains") ??
@@ -328,13 +346,6 @@ export class WebSearchTool {
       optionalStringArray(obj["blocked_domains"], "blocked_domains") ??
       optionalStringArray(obj["blockedDomains"], "blockedDomains");
     const searchPrompt = optionalString(obj["search_prompt"]) ?? optionalString(obj["searchPrompt"]);
-
-    // AR-4 client parity (EnriCode readOptionalStrictPositiveInteger):
-    // sub-one max_results degrades to the server default instead of
-    // failing the call.
-    if (maxResults !== undefined && maxResults < 1) {
-      maxResults = undefined;
-    }
 
     let recency: WebSearchToolParams["recency"];
     if (recencyRaw) {
@@ -348,7 +359,6 @@ export class WebSearchTool {
     return {
       query: queries !== undefined ? (queries[0] ?? query) : query,
       queries,
-      maxResults,
       recency,
       allowedDomains,
       blockedDomains,
@@ -417,7 +427,6 @@ export class WebSearchTool {
       {
         query: effectiveQuery,
         queries: params.queries,
-        maxResults: params.maxResults,
         recency: params.recency,
         allowedDomains: params.allowedDomains,
         blockedDomains: params.blockedDomains,

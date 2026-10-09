@@ -158,13 +158,11 @@ describe("EW-D3: camelCase aliases and query batches", () => {
   it("accepts camelCase aliases for web_search filters", () => {
     const params = buildSearchTool().parseParams({
       query: "bun sqlite",
-      maxResults: "7",
       allowedDomains: ["npmjs.com"],
       blockedDomains: ["spam.example"],
       searchPrompt: "looking for windows support"
     });
 
-    expect(params.maxResults).toBe(7);
     expect(params.allowedDomains).toEqual(["npmjs.com"]);
     expect(params.blockedDomains).toEqual(["spam.example"]);
     expect(params.searchPrompt).toBe("looking for windows support");

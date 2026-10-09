@@ -28,6 +28,85 @@ describe("WebFetchTool.parseParams", () => {
     expect(() => tool.parseParams({})).toThrow(/url|cursor/i);
   });
 
+  it("rejects corrupt integers instead of silently flooring or ignoring them", () => {
+    const tool = new WebFetchTool({
+      createClient: () => {
+        throw new Error("not used");
+      },
+      defaultServerUrl: "http://127.0.0.1:8787",
+      defaultApiKey: "test",
+      defaultTimeoutMs: 1000,
+      defaultMaxChars: 80000
+    });
+
+    // Live-audit V: limitChars 2.9 used to floor to 2 and "abc" used to be
+    // silently ignored — both read as "window honored".
+    expect(() => tool.parseParams({ url: "https://example.com", limitChars: 2.9 })).toThrow(
+      /limit_chars\/limitChars\/limit inválido: 2\.9.*entero/s
+    );
+    expect(() => tool.parseParams({ url: "https://example.com", limit_chars: "abc" })).toThrow(
+      /limit_chars\/limitChars\/limit inválido: "abc"/
+    );
+    expect(() => tool.parseParams({ url: "https://example.com", offsetChars: 5.5 })).toThrow(/offset_chars.*inválido/);
+    expect(() => tool.parseParams({ url: "https://example.com", max_chars: "12abc" })).toThrow(/max_chars.*inválido/);
+    // Complete integer strings stay valid.
+    expect(tool.parseParams({ url: "https://example.com", limitChars: "2000" }).limitChars).toBe(2000);
+  });
+
+  it("rejects invalid enums (format/content/screenshot) instead of silent degradation", () => {
+    const tool = new WebFetchTool({
+      createClient: () => {
+        throw new Error("not used");
+      },
+      defaultServerUrl: "http://127.0.0.1:8787",
+      defaultApiKey: "test",
+      defaultTimeoutMs: 1000,
+      defaultMaxChars: 80000
+    });
+
+    expect(() => tool.parseParams({ url: "https://example.com", format: "xml" })).toThrow(
+      /format inválido: "xml". Valores aceptados: text, markdown, html/
+    );
+    expect(() => tool.parseParams({ url: "https://example.com", content: "everything" })).toThrow(
+      /content inválido: "everything". Valores aceptados: main, full/
+    );
+    expect(() => tool.parseParams({ url: "https://example.com", screenshot: "always" })).toThrow(
+      /screenshot inválido: "always". Valores aceptados: auto, none, force, analyze/
+    );
+    expect(tool.parseParams({ url: "https://example.com", format: "markdown" }).format).toBe("markdown");
+  });
+
+  it("rejects broken range items instead of collapsing them into duplicate offset-0 windows", () => {
+    const tool = new WebFetchTool({
+      createClient: () => {
+        throw new Error("not used");
+      },
+      defaultServerUrl: "http://127.0.0.1:8787",
+      defaultApiKey: "test",
+      defaultTimeoutMs: 1000,
+      defaultMaxChars: 80000
+    });
+
+    // Live-audit V: broken items ({}, corrupt ints) used to become silent
+    // offset-0 windows, duplicating ghost ranges without any notice.
+    expect(() => tool.parseParams({ url: "https://example.com", ranges: [{}] })).toThrow(
+      /rango inválido en la posición 1: falta offset_chars/
+    );
+    expect(() =>
+      tool.parseParams({ url: "https://example.com", ranges: [{ offsetChars: "abc" }, { offsetChars: 5 }] })
+    ).toThrow(/ranges\[0\]\.offsetChars inválido: "abc"/);
+    expect(() =>
+      tool.parseParams({ url: "https://example.com", ranges: [{ offsetChars: 5, limitChars: 2.5 }] })
+    ).toThrow(/ranges\[0\]\.limitChars inválido: 2\.5/);
+    const ranges = tool.parseParams({
+      url: "https://example.com",
+      ranges: [{ offsetChars: 0, limitChars: 200 }, { offset_chars: 200, limit_chars: 200 }]
+    }).ranges;
+    expect(ranges).toHaveLength(2);
+    expect(ranges?.[0]?.offsetChars).toBe(0);
+    expect(ranges?.[1]?.offsetChars).toBe(200);
+  });
+
   it("accepts UUID cursors and rejects invented cursor strings", () => {
     const tool = new WebFetchTool({
       createClient: () => {
@@ -105,6 +184,54 @@ describe("WebFetchTool.parseParams", () => {
     expect(params.format).toBe("markdown");
   });
 
+  it("rejects unknown parameters with the accepted list", () => {
+    const tool = new WebFetchTool({
+      createClient: () => {
+        throw new Error("not used");
+      },
+      defaultServerUrl: "http://127.0.0.1:8787",
+      defaultApiKey: "test",
+      defaultTimeoutMs: 1000,
+      defaultMaxChars: 80000
+    });
+
+    expect(() => tool.parseParams({ url: "https://example.com", frobnicate: 1 })).toThrow(
+      /Parámetro no reconocido: frobnicate\. Parámetros aceptados: url, cursor, action, prompt/
+    );
+    expect(() => tool.parseParams({ url: "https://example.com", timeout_ms: 5000 })).toThrow(
+      /Parámetro no reconocido: timeout_ms/
+    );
+    expect(() => tool.parseParams({ url: "https://example.com", maxResults: 2 })).toThrow(
+      /Parámetro no reconocido: maxResults\. /
+    );
+    expect(() =>
+      tool.parseParams({ url: "https://example.com", frobnicate: 1, bogus: "x" })
+    ).toThrow(/Parámetro no reconocido: frobnicate, bogus\. Parámetros aceptados/);
+    expect(() =>
+      tool.parseParams({ url: "https://example.com", maxResults: 2 })
+    ).toThrow(/screenshot \(auto\|none\|force\|analyze\)/);
+    // The full accepted alias surface must keep parsing cleanly.
+    expect(() =>
+      tool.parseParams({
+        url: "https://example.com/docs",
+        cursor: "123e4567-e89b-12d3-a456-426614174000",
+        prompt: "p",
+        maxChars: 1000,
+        format: "markdown",
+        content: "full",
+        includeLinks: true,
+        includeMetadata: true,
+        anchor: "install",
+        offsetChars: 0,
+        limitChars: 10,
+        screenshot: "force",
+        ranges: [{ offsetChars: 0, limitChars: 5 }],
+        action: "delete"
+      })
+    ).not.toThrow();
+    expect(() => tool.parseParams({ url: "https://example.com" })).not.toThrow();
+  });
+
   it("degrades unknown formats to the default instead of failing", () => {
     const tool = new WebFetchTool({
       createClient: () => {
@@ -119,8 +246,14 @@ describe("WebFetchTool.parseParams", () => {
     const plain = tool.parseParams({ url: "https://example.com" });
     expect(plain.format).toBeUndefined();
 
-    expect(tool.parseParams({ url: "https://example.com", format: "pdf" }).format).toBeUndefined();
-    expect(tool.parseParams({ url: "https://example.com", format: 42 }).format).toBeUndefined();
+    // Strict enum parity with the proxy and the EnriCode record: corrupt
+    // format values REJECT with the valid list instead of degrading.
+    expect(() => tool.parseParams({ url: "https://example.com", format: "pdf" })).toThrow(
+      /format inválido: "pdf". Valores aceptados: text, markdown, html/
+    );
+    expect(() => tool.parseParams({ url: "https://example.com", format: 42 })).toThrow(
+      /format inválido: 42/
+    );
 
     const html = tool.parseParams({ url: "https://example.com", format: "html" });
     expect(html.format).toBe("html");
@@ -158,8 +291,11 @@ describe("WebFetchTool.parseParams", () => {
     expect(defaults.includeMetadata).toBeUndefined();
     expect(defaults.anchor).toBeUndefined();
 
-    // Invalid content values degrade to the documented default ("main").
-    expect(tool.parseParams({ url: "https://example.com/docs", content: "side" }).content).toBeUndefined();
+    // Invalid content values REJECT with the valid list (strict parity
+    // with the proxy and the EnriCode record).
+    expect(() => tool.parseParams({ url: "https://example.com/docs", content: "side" })).toThrow(
+      /content inválido: "side". Valores aceptados: main, full/
+    );
   });
 
   it("rejects non-positive max_chars", () => {

@@ -277,7 +277,8 @@ export interface WebFetchToolResult extends Record<string, unknown> {
  */
 export interface WebFetchResultScreenshot {
   /**
-   * Image MIME type (always `image/jpeg`).
+   * Image MIME type of the captured segment (e.g. `image/webp`; the
+   * capture format is chosen by EnriProxy, not fixed by this contract).
    */
   readonly mime_type: string;
 
@@ -660,7 +661,15 @@ export class WebFetchTool {
             cursor,
             offsetChars: params.offsetChars,
             limitChars: params.limitChars,
-            maxChars
+            maxChars,
+            // Server-side prompt parity: the proxy runs its extractive
+            // reducer over the window (URL-mode parity) — a cursor `prompt`
+            // must be honored, not silently dropped.
+            ...(params.prompt !== undefined && params.prompt.trim() ? { prompt: params.prompt } : {}),
+            // Preserved-screenshot re-delivery rides only an explicit mode
+            // (EnriCode wire parity: force/analyze re-deliver, absent stays
+            // text-only to save tokens).
+            ...(params.screenshot !== undefined ? { screenshot: params.screenshot } : {})
           },
           signal
         );

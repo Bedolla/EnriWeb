@@ -69,16 +69,20 @@ describe("WebSearchTool operator engines", () => {
     expect(calls[0]?.engines).toBe("google");
   });
 
-  it("ignores a model-supplied engines field and keeps the operator default", async () => {
+  it("rejects a model-supplied engines field (operator-only) instead of silently overriding", async () => {
     const calls: WebSearchRequest[] = [];
     const tool = makeTool(async (): Promise<WebSearchResponse> => {
       return { results: [], count: 0 };
     }, calls, "google");
 
-    await tool.execute(tool.parseParams({ query: "bun docs", engines: "bing" }));
-
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.engines).toBe("google");
+    // Engine choice is operator-only configuration: a model-supplied
+    // `engines` argument rejects with the unknown-parameter coaching
+    // (silent ignore would read as "engine picked"), so the operator
+    // default can never be overridden from a tool call.
+    expect(() => tool.parseParams({ query: "bun docs", engines: "bing" })).toThrow(
+      /Parámetro no reconocido: engines/
+    );
+    expect(calls).toHaveLength(0);
   });
 
   it("omits engines when the operator configured none", async () => {

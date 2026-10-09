@@ -102,27 +102,11 @@ describe("EnriWebServer CallTool", () => {
   it("appends Spanish guidance to known proxy diagnostics", async () => {
     const client = await createLinkedClient({
       fetchExecute: async (): Promise<unknown> => {
-        throw new EnriProxyHttpError("El fetch web falló (HTTP 400).", 400, {}, "{'max_results' must be between 1 and 20}");
-      }
-    });
-    try {
-      const result = await client.callTool({ name: "web_fetch", arguments: { url: "https://example.com" } });
-      expect(result.isError).toBe(true);
-      const content = result.content as Array<{ type: string; text: string }>;
-      expect(content[0]?.text).toContain("Guía:");
-    } finally {
-      await client.close();
-    }
-  });
-
-  it("recognizes the current Spanish max_results diagnostic from the proxy", async () => {
-    const client = await createLinkedClient({
-      fetchExecute: async (): Promise<unknown> => {
         throw new EnriProxyHttpError(
           "El fetch web falló (HTTP 400).",
           400,
           {},
-          JSON.stringify({ message: "'max_results' debe estar entre 1 y 20." })
+          JSON.stringify({ message: "Falta o es inválido 'query'." })
         );
       }
     });
@@ -130,7 +114,7 @@ describe("EnriWebServer CallTool", () => {
       const result = await client.callTool({ name: "web_fetch", arguments: { url: "https://example.com" } });
       expect(result.isError).toBe(true);
       const content = result.content as Array<{ type: string; text: string }>;
-      expect(content[0]?.text).toContain("Guía: pida max_results entre 1 y el límite");
+      expect(content[0]?.text).toContain("Guía:");
     } finally {
       await client.close();
     }
@@ -292,7 +276,7 @@ describe("EnriWebServer CallTool", () => {
     }
   });
 
-  it("documents honest search timing, max_results clamping, and next_offset_chars", async () => {
+  it("documents honest search timing and next_offset_chars", async () => {
     const client = await createLinkedClient({});
     try {
       const listed = await client.listTools();
@@ -303,14 +287,11 @@ describe("EnriWebServer CallTool", () => {
       // fetches per entity; GitHub latest + 3 pages).
       expect(search?.description).toContain("~120 s");
       expect(search?.description).not.toContain("~30 s");
-      // The proxy now clamps max_results instead of answering HTTP 400.
-      expect(search?.description).toContain("se recortan al límite");
-      expect(search?.description).not.toContain("HTTP 400");
+      // max_results removed from the contract: the model doesn't choose count.
+      expect(search?.description).toContain("no lo controls");
 
       const searchInput = search?.inputSchema as { properties?: Record<string, { description?: string }> };
-      expect(searchInput?.properties?.["max_results"]?.description).toContain(
-        "se recortan al límite"
-      );
+      expect(searchInput?.properties).not.toHaveProperty("max_results");
 
       const fetchOutput = fetchTool?.outputSchema as { properties?: Record<string, unknown> };
       expect(Object.keys(fetchOutput.properties ?? {})).toContain("next_offset_chars");

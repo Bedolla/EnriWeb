@@ -138,10 +138,6 @@ Inputs:
 
 - `query` (`string` or `string[]`, required unless `queries` is provided): the search query. As an array it accepts a batch of 1 to 4 non-blank queries (each entry trimmed; duplicates collapse) — equivalent to sending `queries`.
 - `queries` (`string[]`, optional): batch of 1 to 4 queries. Takes precedence over `query`. EnriProxy runs every query in parallel, merges results by relevance rank, and deduplicates by URL.
-- `max_results` (`integer`, optional; alias `maxResults`)
-  - Must be `>= 1`.
-  - If omitted, EnriProxy uses its configured default.
-  - The upper limit is enforced server-side (values above the limit are clamped to it).
 - `recency` (`string`, optional, default: `noLimit`)
   - One of: `oneDay` | `oneWeek` | `oneMonth` | `oneYear` | `noLimit`
 - `allowed_domains` (`string[]`, optional; alias `allowedDomains`): allowlist of domains to include.
@@ -158,12 +154,13 @@ Outputs (`structuredContent`):
 - `fetchedContents[]` / `fetchedCount`: when server-side auto-fetch is enabled, the verified content of the top result pages (`url`, `title`, `content`, `truncated`). Read these before concluding information is missing.
 - `verified[]`: registry verification rows for npm / PyPI / crates.io / NuGet / GitHub URLs found in the results (`kind`, `name`, `latest_stable`, `latest_prerelease`, `status`, `error`).
 
+The result count is decided by the server (its configured limit); there is no per-call count parameter.
+
 Example `arguments` object:
 
 ```jsonc
 {
   "queries": ["qdrant docker compose autostart", "qdrant container restart policy"],
-  "max_results": 10,
   "recency": "oneMonth"
 }
 ```

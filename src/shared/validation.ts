@@ -20,6 +20,40 @@ export function assertObject(value: unknown, name: string): Record<string, unkno
 }
 
 /**
+ * Reads one optional integer that must be either a clean integer or absent.
+ *
+ * @remarks
+ * The legacy `optionalInt` silently floors floats (2.9 -> 2) and silently
+ * ignores corrupt strings ("abc" -> undefined), which reads downstream as
+ * "parameter honored". This strict variant treats present-but-corrupt
+ * values as contract violations with actionable coaching.
+ *
+ * @param value - Raw argument value
+ * @param fieldName - Model-facing field name for the coaching error
+ * @returns Clean integer, or undefined when absent (undefined/null/blank)
+ * @throws Error when the value is present but not a clean integer
+ */
+export function strictOptionalInt(value: unknown, fieldName: string): number | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value === "string" && value.trim() === "") {
+    return undefined;
+  }
+  if (typeof value === "number" && Number.isInteger(value) && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && /^-?\d+$/u.test(value.trim())) {
+    const parsed: number = Number.parseInt(value.trim(), 10);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  const rendered: string = typeof value === "string" ? `"${value.trim()}"` : String(value);
+  throw new Error(`${fieldName} inválido: ${rendered}. Envía un entero (ej. 2000) u omítelo.`);
+}
+
+/**
  * Asserts that value is a non-empty string.
  *
  * @param value - Value to check

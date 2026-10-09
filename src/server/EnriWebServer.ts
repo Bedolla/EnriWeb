@@ -321,9 +321,6 @@ export class EnriWebServer {
     if (/La petición expiró después de \d+ms/u.test(source)) {
       return "La petición excedió su presupuesto de tiempo. Es reintentable: vuelva a llamar la herramienta; si el documento es muy grande, use un max_chars menor o rangos más acotados.";
     }
-    if (/'max_results' (?:must be between 1 and|debe estar entre 1 y) \d+/u.test(source)) {
-      return `Guía: pida max_results entre 1 y el límite indicado u omita el campo${statusNote}.`;
-    }
     if (
       /Missing or invalid '(query|url|cursor)'/.test(source) ||
       /Falta o es inválido '(?:query|url|cursor)'/u.test(source)
@@ -368,7 +365,7 @@ export class EnriWebServer {
         "Notas:\n" +
         "- Envíe `query` (una consulta) o `queries` (arreglo de 1 a 4). Si envía ambos, se usan `queries`.\n" +
         "- Con `queries`, EnriProxy ejecuta todas en paralelo, combina los resultados en orden de relevancia y elimina duplicados por URL: use un lote cuando el objetivo admita varias formulaciones (ej: [\"bun sqlite windows\", \"bun:sqlite platform support\"]).\n" +
-        "- Omita `max_results` para el default del servidor; pida 1 hasta el límite para ahorrar tokens/latencia; los valores sobre el límite del servidor se recortan al límite por EnriProxy.\n" +
+        "- El número de resultados lo decide el servidor; no lo controls tú.\n" +
         "- Para temas poco documentados (specs de productos privados, rumores), combine formulaciones de comunidad: [\"<tema> analysis\", \"<tema> site:reddit.com\", \"<tema> estimated specs\"].\n" +
         "- Use consultas específicas para obtener mejores resultados.\n" +
         "- Use el filtro de recencia para información sensible al tiempo.\n" +
@@ -379,7 +376,7 @@ export class EnriWebServer {
         type: "object",
         examples: [
           { query: "bun runtime documentation" },
-          { query: ["rust async tokio spawn", "tokio::spawn vs block_on"], max_results: 8, recency: "oneMonth" }
+          { query: ["rust async tokio spawn", "tokio::spawn vs block_on"], recency: "oneMonth" }
         ],
         properties: {
           query: {
@@ -406,11 +403,6 @@ export class EnriWebServer {
             maxItems: 4,
             description:
               "Lote de 1 a 4 consultas no vacías; se ejecutan en paralelo y sus resultados se combinan y deduplican por URL. Ejemplo: [\"rust async tokio spawn\", \"tokio::spawn vs block_on\"]. Si también envía `query`, se ignora y se usan `queries`."
-          },
-          max_results: {
-            type: "integer",
-            description:
-              "Máximo de resultados deseados (1 hasta el límite del servidor; los valores mayores se recortan al límite). Omitido usa el default configurado. También se acepta el alias camelCase `maxResults`."
           },
           recency: {
             type: "string",

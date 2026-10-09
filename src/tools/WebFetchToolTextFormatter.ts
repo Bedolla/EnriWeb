@@ -165,9 +165,14 @@ export class WebFetchToolTextFormatter {
     // or why it was skipped. The "analyzed" mode inlines the server-side
     // visual descriptions — that IS the visual material for blind models.
     const analyzedSegments: ReadonlyArray<string | null> = result.screenshot_analyses ?? [];
+    // Real capture formats reported by the proxy (e.g. `image/webp`): the
+    // note must never assume a fixed format like JPEG.
+    const capturedFormats: ReadonlyArray<string> = result.screenshots !== undefined
+      ? Array.from(new Set(result.screenshots.map((segment) => String(segment.mime_type))))
+      : [];
     const screenshotNote =
       result.screenshot_status === "captured" && result.screenshots !== undefined
-        ? `\n\n[Capturas de pantalla: ${String(result.screenshots.length)} segmento(s) JPEG adjuntos como bloques de imagen (${result.screenshots
+        ? `\n\n[Capturas de pantalla: ${String(result.screenshots.length)} segmento(s) de imagen en ${capturedFormats.join(", ")} adjuntos como bloques de imagen (${result.screenshots
             .map((segment) => `${String(segment.width)}x${String(segment.height)} @scroll ${String(segment.scroll_y)}px`)
             .join(", ")}). Si tu modelo NO puede ver imágenes, estos bloques no le sirven: repita esta llamada con screenshot="analyze" para recibir la descripción textual generada del lado del servidor.]`
         : result.screenshot_status === "analyzed"

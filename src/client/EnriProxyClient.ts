@@ -57,11 +57,6 @@ export interface WebSearchRequest {
   readonly queries?: string[];
 
   /**
-   * Maximum number of results.
-   */
-  readonly maxResults?: number;
-
-  /**
    * Recency filter.
    */
   readonly recency?: string;
@@ -286,6 +281,25 @@ export interface WebFetchCursorRequest {
    * limit if `limitChars` is not provided.
    */
   readonly maxChars?: number;
+
+  /**
+   * Optional extraction prompt for the cursor read.
+   *
+   * @remarks
+   * Server-side parity with URL reads: the proxy runs its extractive
+   * reducer over the delivered window. Forwarding keeps a cursor `prompt`
+   * honored instead of silently dropped.
+   */
+  readonly prompt?: string;
+
+  /**
+   * Optional screenshot request for the cursor read.
+   *
+   * @remarks
+   * Only explicit "force"/"analyze" matter server-side (preserved-segment
+   * re-delivery); "auto"/"none" stay text-only to save tokens.
+   */
+  readonly screenshot?: "auto" | "force" | "none" | "analyze";
 }
 
 /**
@@ -507,7 +521,8 @@ export interface WebFetchResponse {
  */
 export interface WebFetchResponseScreenshot {
   /**
-   * Image MIME type (always `image/jpeg`).
+   * Image MIME type of the captured segment (e.g. `image/webp`; the
+   * capture format is chosen by EnriProxy, not fixed by this contract).
    */
   readonly mime_type: string;
 
@@ -773,9 +788,6 @@ export class EnriProxyClient {
       payload["queries"] = params.queries;
     }
 
-    if (typeof params.maxResults === "number") {
-      payload["max_results"] = params.maxResults;
-    }
     if (typeof params.recency === "string" && params.recency.trim()) {
       payload["recency"] = params.recency.trim();
     }
@@ -870,6 +882,20 @@ export class EnriProxyClient {
       const cursorMaxChars: number | undefined = normalizeMaxChars(params.maxChars);
       if (cursorMaxChars !== undefined) {
         payload["max_chars"] = cursorMaxChars;
+      }
+      // Server-side prompt parity for cursor windows (URL-mode parity):
+      // the proxy runs its extractive reducer over the delivered window.
+      if (typeof params.prompt === "string" && params.prompt.trim()) {
+        payload["prompt"] = params.prompt.trim();
+      }
+      // Preserved-screenshot re-delivery rides only an explicit mode.
+      if (
+        params.screenshot === "force" ||
+        params.screenshot === "analyze" ||
+        params.screenshot === "none" ||
+        params.screenshot === "auto"
+      ) {
+        payload["screenshot"] = params.screenshot;
       }
     } else {
       payload["url"] = params.url;

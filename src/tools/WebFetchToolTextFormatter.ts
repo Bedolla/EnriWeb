@@ -110,6 +110,16 @@ export class WebFetchToolTextFormatter {
   }
 
   /**
+   * Thin-text threshold mirroring the proxy screenshot policy.
+   *
+   * @remarks
+   * Same floor as EnriProxy `SCREENSHOT_AUTO_THIN_TEXT_CHARS`: below it a
+   * rendered image carries information the text does not, so a text-only
+   * result without visual material must coach the analyze retry.
+   */
+  private static readonly THIN_TEXT_CHARS = 1500;
+
+  /**
    * Formats one single-read (or reduced) result.
    *
    * @param result - Single-read result
@@ -165,6 +175,15 @@ export class WebFetchToolTextFormatter {
     // or why it was skipped. The "analyzed" mode inlines the server-side
     // visual descriptions — that IS the visual material for blind models.
     const analyzedSegments: ReadonlyArray<string | null> = result.screenshot_analyses ?? [];
+    const analysisBlock: string =
+      analyzedSegments.length > 0
+        ? `\n\n[Análisis visual de la página (${String(analyzedSegments.length)} segmento(s), generado del lado del servidor):]\n${analyzedSegments
+            .map((description, index) =>
+              description === null || description.length <= 0
+                ? `Segmento ${String(index + 1)}: análisis no disponible.`
+                : `Segmento ${String(index + 1)}: ${description}`)
+            .join("\n")}`
+        : "";
     // Real capture formats reported by the proxy (e.g. `image/webp`): the
     // note must never assume a fixed format like JPEG.
     const capturedFormats: ReadonlyArray<string> = result.screenshots !== undefined
@@ -174,17 +193,13 @@ export class WebFetchToolTextFormatter {
       result.screenshot_status === "captured" && result.screenshots !== undefined
         ? `\n\n[Capturas de pantalla: ${String(result.screenshots.length)} segmento(s) de imagen en ${capturedFormats.join(", ")} adjuntos como bloques de imagen (${result.screenshots
             .map((segment) => `${String(segment.width)}x${String(segment.height)} @scroll ${String(segment.scroll_y)}px`)
-            .join(", ")}). Si tu modelo NO puede ver imágenes, estos bloques no le sirven: repita esta llamada con screenshot="analyze" para recibir la descripción textual generada del lado del servidor.]`
+            .join(", ")}). Si tu modelo NO puede ver imágenes, estos bloques no le sirven: la descripción textual del servidor viaja en esta misma respuesta; si no la ves, repite esta llamada con screenshot="analyze".]${analysisBlock}`
         : result.screenshot_status === "analyzed"
-          ? `\n\n[Análisis visual de la página (${String(analyzedSegments.length)} segmento(s), generado del lado del servidor):]\n${analyzedSegments
-              .map((description, index) =>
-                description === null || description.length <= 0
-                  ? `Segmento ${String(index + 1)}: análisis no disponible.`
-                  : `Segmento ${String(index + 1)}: ${description}`)
-              .join("\n")}`
+          ? analysisBlock
           : result.screenshot_status === "skipped"
-            ? `\n\n[Capturas de pantalla omitidas (razón: ${result.screenshot_reason ?? "desconocida"}); el contenido de texto arriba es todo el material disponible.]`
-            : "";
+            ? `\n\n[Capturas de pantalla omitidas (razón: ${result.screenshot_reason ?? "desconocida"}); el contenido de texto arriba es todo el material disponible.]${analysisBlock}`
+            : analysisBlock;
+    const thinContentNote = WebFetchToolTextFormatter.buildThinContentNote(result);
 
     return (
       header +
@@ -195,7 +210,46 @@ export class WebFetchToolTextFormatter {
       cursorNote +
       recoveryNote +
       screenshotNote +
+      thinContentNote +
       untrustedNote
     );
+  }
+
+  /**
+   * Builds a coaching note for thin text extractions without visual material.
+   *
+   * @remarks
+   * Live finding (operator log 2026-10-30): `yacy.net` rendered to 8 chars
+   * with one screenshot segment; blind models reading only the text channel
+   * saw an empty body with no next action. When a 2xx text result carries
+   * less than the thin-text floor, is not truncated (no cursor continuation
+   * pending), and delivered no image blocks nor server-side analysis, the
+   * text channel must name the `screenshot="analyze"` retry explicitly.
+   * Binary, PDF, error-status, and truncated results already carry their own
+   * dedicated guidance and never receive this note.
+   *
+   * @param result - Single-read result to inspect.
+   * @returns Spanish coaching note, or an empty string when not applicable.
+   */
+  private static buildThinContentNote(
+    result: Exclude<WebFetchToolExecuteResult, WebFetchToolDeleteResult | WebFetchToolRangesResult>
+  ): string {
+    if (result.truncated === true) {
+      return "";
+    }
+    if (typeof result.status === "number" && (result.status < 200 || result.status >= 300)) {
+      return "";
+    }
+    const contentTypeLower: string = String(result.content_type).toLowerCase();
+    if (!contentTypeLower.includes("text/")) {
+      return "";
+    }
+    if (result.content.trim().length >= WebFetchToolTextFormatter.THIN_TEXT_CHARS) {
+      return "";
+    }
+    if (result.screenshot_status === "captured" || result.screenshot_status === "analyzed") {
+      return "";
+    }
+    return `\n\n[Texto mínimo (${String(result.content.trim().length)} caracteres): la página extrajo casi nada. Si la página es visual o sospecha un shell JS, repita con screenshot="analyze" para la descripción visual del lado del servidor; si no, pruebe ?enri_parts=links o busque otra fuente.]`;
   }
 }

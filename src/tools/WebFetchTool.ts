@@ -12,7 +12,7 @@
  *
  * @module tools/WebFetchTool
  */
-import { type EnriProxyClient, MAX_WIRE_MAX_CHARS, isExpiredCursorError, isExpiredCursorMessageText } from "../client/EnriProxyClient.js";
+import { type EnriProxyClient, type WebFetchResponse, MAX_WIRE_MAX_CHARS, isExpiredCursorError, isExpiredCursorMessageText } from "../client/EnriProxyClient.js";
 import { WebFetchNpmProjection } from "./WebFetchNpmProjection.js";
 import { parseWebFetchParams } from "./WebFetchParamsParser.js";
 import { WebFetchRangesExecutor } from "./WebFetchRangesExecutor.js";
@@ -93,9 +93,11 @@ export interface WebFetchToolParams {
   /**
    * Screenshot mode for the fetched page. Pick by what YOUR model can do:
    *
-   * - No field (or "auto"): server captures screenshots ONLY when the page
-   *   has very little text (games, dashboards, maps). Images arrive as MCP
-   *   image blocks — use this only if your model can SEE images.
+    * - No field (or "auto"): server captures screenshots ONLY when the page
+    *   has very little text (games, dashboards, maps). Images arrive as MCP
+    *   image blocks, and the tool additionally attaches the server-side text
+    *   description of every captured segment (`screenshot_analyses`), so
+    *   models that cannot SEE images still consume the visual material.
    * - "analyze": USE THIS IF YOUR MODEL CANNOT SEE IMAGES. The server
    *   captures the page and returns a TEXT DESCRIPTION of what it looks
    *   like ("Análisis visual: ...") in `screenshot_analyses`. No images are
@@ -761,7 +763,7 @@ export class WebFetchTool {
         : npmResult;
     }
 
-    const response = await client.webFetch(
+    let response = await client.webFetch(
       {
         url,
         prompt: params.prompt,
@@ -785,6 +787,19 @@ export class WebFetchTool {
             ? { screenshot: params.screenshot ?? this.deps.defaultScreenshotMode }
             : {})
       },
+      signal
+    );
+
+    response = await this.maybeAttachScreenshotAnalyses(
+      client,
+      url,
+      params,
+      effectiveMaxChars,
+      format,
+      content,
+      includeLinks,
+      includeMetadata,
+      response,
       signal
     );
 
@@ -893,6 +908,83 @@ export class WebFetchTool {
       `El cursor anterior expiró en el servidor (TTL ~10 minutos) y el contenido se volvió a obtener de la url con los mismos parámetros; los offsets de esta respuesta aplican a la captura nueva, no a la anterior.` +
       (hasNewCursor ? ` Continúe con el cursor nuevo; no reintente el anterior (${expiredCursor}).` : ``);
     return { ...fresh, recovered_from_expired_cursor: true, recovery_note: recoveryNote };
+  }
+
+  /**
+   * Attaches server-side screenshot descriptions to `auto` reads that captured images.
+   *
+   * @remarks
+   * Hosts and models without vision input never consume MCP image blocks
+   * (opencode replaces them with an ERROR line when the model lacks image
+   * input, other hosts drop them silently). `auto` captures only on thin
+   * pages, so when it returns segments the tool follows up with an
+   * `analyze` read — cursor re-delivery when the first response issued one
+   * (no new page load), otherwise a plain re-read — and merges
+   * `screenshot_analyses` as text. Vision clients keep their image blocks;
+   * blind clients get the description. Explicit `force` (operator wants
+   * images only), `none`, and `analyze` (already text) never trigger a
+   * second call, and a failed follow-up degrades to the original result
+   * instead of failing the fetch.
+   *
+   * @param client - Proxy client for the follow-up call.
+   * @param url - Fetched URL for cursor-less re-reads.
+   * @param params - Validated tool parameters (projection and prompt).
+   * @param maxChars - Content budget applied to a cursor-less re-read.
+   * @param format - Content flavor applied to a cursor-less re-read.
+   * @param content - Content scope applied to a cursor-less re-read.
+   * @param includeLinks - Link inventory flag for a cursor-less re-read.
+   * @param includeMetadata - Metadata flag for a cursor-less re-read.
+   * @param response - First-read proxy response.
+   * @param signal - Optional caller abort signal.
+   * @returns Response with analyses attached when the follow-up succeeded.
+   */
+  private async maybeAttachScreenshotAnalyses(
+    client: EnriProxyClient,
+    url: string,
+    params: WebFetchToolParams,
+    maxChars: number,
+    format: "text" | "markdown" | "html",
+    content: "main" | "full",
+    includeLinks: boolean,
+    includeMetadata: boolean,
+    response: WebFetchResponse,
+    signal?: AbortSignal
+  ): Promise<WebFetchResponse> {
+    const effectiveMode: string = params.screenshot ?? this.deps.defaultScreenshotMode ?? "auto";
+    if (effectiveMode !== "auto") {
+      return response;
+    }
+    if (!response.screenshots || response.screenshots.length === 0) {
+      return response;
+    }
+    if (response.screenshot_analyses !== undefined && response.screenshot_analyses.length > 0) {
+      return response;
+    }
+    try {
+      const followUp: WebFetchResponse =
+        typeof response.cursor === "string" && response.cursor.length > 0
+          ? await client.webFetch({ cursor: response.cursor, screenshot: "analyze" }, signal)
+          : await client.webFetch(
+              {
+                url,
+                prompt: params.prompt,
+                maxChars,
+                format,
+                content,
+                includeLinks,
+                includeMetadata,
+                ...(params.anchor !== undefined ? { anchor: params.anchor } : {}),
+                screenshot: "analyze" as const
+              },
+              signal
+            );
+      if (followUp.screenshot_analyses !== undefined && followUp.screenshot_analyses.length > 0) {
+        return { ...response, screenshot_analyses: followUp.screenshot_analyses };
+      }
+      return response;
+    } catch {
+      return response;
+    }
   }
 
   /**

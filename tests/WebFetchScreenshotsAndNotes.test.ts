@@ -205,7 +205,7 @@ describe("WebFetchToolTextFormatter screenshot notes", (): void => {
     // The note names the real capture format instead of assuming JPEG.
     expect(text).toContain("en image/jpeg adjuntos");
     // Blind models get an explicit escape hatch toward the analyze mode.
-    expect(text).toContain('repita esta llamada con screenshot="analyze"');
+    expect(text).toContain('repite esta llamada con screenshot="analyze"');
     // The base64 payload must never leak into the text channel.
     expect(text).not.toContain("ZgFrZQ==");
   });

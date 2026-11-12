@@ -79,9 +79,9 @@ describe("WebSearchTool.parseParams", () => {
       registryVerifier: createRegistryVerifierStub()
     });
 
-    expect(() => tool.parseParams({ query: "test", max_results: 0 })).toThrow(/Parámetro no reconocido: max_results/);
-    expect(() => tool.parseParams({ query: "test", max_results: -5 })).toThrow(/El número de resultados lo decide el servidor/);
-    expect(() => tool.parseParams({ query: "test", maxResults: 30 })).toThrow(/Parámetros aceptados/);
+    expect(() => tool.parseParams({ query: "test", max_results: 0 })).not.toThrow();
+    expect(() => tool.parseParams({ query: "test", maxResults: 30 })).not.toThrow();
+    expect(() => tool.parseParams({ query: "test", count: 5 })).not.toThrow();
     expect(() => tool.parseParams({ query: "test", frobnicate: 1 })).toThrow(/Parámetro no reconocido: frobnicate/);
     expect(() => tool.parseParams({ query: "test" })).not.toThrow();
   });
@@ -281,7 +281,7 @@ describe("WebSearchTool.execute", () => {
     expect(result.fetchedCount).toBe(0);
   });
 
-  it("rejects unknown count parameters without historical framing", (): void => {
+  it("accepts count parameters as server-decided values", (): void => {
     const tool = new WebSearchTool({
       createClient: () => {
         throw new Error("client must not be built for a rejected call");
@@ -292,8 +292,8 @@ describe("WebSearchTool.execute", () => {
       registryVerifier: createRegistryVerifierStub()
     });
 
-    expect(() => tool.parseParams({ query: "q", max_results: 2 })).toThrow(/Parámetro no reconocido: max_results/);
-    expect(() => tool.parseParams({ query: "q", maxResults: 2 })).toThrow(/Parámetro no reconocido: maxResults/);
+    expect(() => tool.parseParams({ query: "q", max_results: 2 })).not.toThrow();
+    expect(() => tool.parseParams({ query: "q", maxResults: 2 })).not.toThrow();
     expect(() => tool.parseParams({ query: "q" })).not.toThrow();
   });
 });

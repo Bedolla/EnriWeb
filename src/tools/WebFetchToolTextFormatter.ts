@@ -244,6 +244,17 @@ export class WebFetchToolTextFormatter {
     if (!contentTypeLower.includes("text/")) {
       return "";
     }
+    const intentionalWindow: boolean = /[?&]enri_(find|parts|body_offset|body_limit|section)=/u.test(
+      String(result.url ?? ""),
+    );
+    const structuredSection: boolean = intentionalWindow ||
+      /[?&]enri_section=/u.test(String(result.url ?? "")) ||
+      /^(DATOS DEL VIDEO|MANIFIESTO|TRANSCRIPCIÓN|TRANSCRIPCION|DESCRIPCIÓN|DESCRIPCION|COMENTARIOS)/u.test(
+        result.content.trimStart(),
+      );
+    if (structuredSection) {
+      return "";
+    }
     if (result.content.trim().length >= WebFetchToolTextFormatter.THIN_TEXT_CHARS) {
       return "";
     }

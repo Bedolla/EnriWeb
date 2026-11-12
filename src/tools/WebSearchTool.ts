@@ -324,7 +324,13 @@ export class WebSearchTool {
       "blocked_domains",
       "blockedDomains",
       "search_prompt",
-      "searchPrompt"
+      "searchPrompt",
+      "count",
+      "numResults",
+      "num_results",
+      "maxResults",
+      "max_results",
+      "limit"
     ];
     const unknownParamKeys: string[] = Object.keys(obj).filter(
       (key: string): boolean => !acceptedSearchParamKeys.includes(key)

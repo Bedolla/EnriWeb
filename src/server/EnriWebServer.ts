@@ -13,15 +13,8 @@
  *
  * @module server/EnriWebServer
  */
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-  type CallToolResult,
-  type Tool
-} from "@modelcontextprotocol/sdk/types.js";
-
+import { Server } from "@modelcontextprotocol/server";
+import type { CallToolResult, Tool, Transport } from "@modelcontextprotocol/server";
 import type { WebSearchTool } from "../tools/WebSearchTool.js";
 import { MAX_SEARCH_PROMPT_CHARS } from "../tools/WebSearchTool.js";
 import type { WebFetchTool, WebFetchToolExecuteResult } from "../tools/WebFetchTool.js";
@@ -114,7 +107,7 @@ export class EnriWebServer {
       this.getWebFetchToolDefinition()
     ];
 
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
+    this.server.setRequestHandler("tools/list", async () => {
       return {
         tools: tools.map((tool) => ({
           ...tool,
@@ -123,10 +116,10 @@ export class EnriWebServer {
       };
     });
 
-    this.server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+    this.server.setRequestHandler("tools/call", async (request, ctx) => {
       const toolName = request.params.name;
       const args = request.params.arguments ?? {};
-      const signal: AbortSignal | undefined = extra?.signal;
+      const signal: AbortSignal | undefined = ctx?.mcpReq.signal;
 
       try {
         if (toolName === "web_search") {

@@ -6,7 +6,7 @@
  *
  * @module index
  */
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { EnriProxyClient, MAX_WIRE_MAX_CHARS } from "./client/EnriProxyClient.js";
 import { parseSearchEnginesEnv, SEARCH_ENGINES_ENV } from "./shared/operatorSearchEngines.js";
 import { WebSearchTool } from "./tools/WebSearchTool.js";

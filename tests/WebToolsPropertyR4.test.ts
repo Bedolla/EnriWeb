@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
 import * as fc from "fast-check";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import type { Tool } from "@modelcontextprotocol/client";
 import { EnriWebServer } from "../src/server/EnriWebServer.js";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { WebFetchTool } from "../src/tools/WebFetchTool.js";
 import { MAX_ANCHOR_CHARS } from "../src/tools/WebFetchTool.js";
 import { MAX_SEARCH_PROMPT_CHARS } from "../src/tools/WebSearchTool.js";

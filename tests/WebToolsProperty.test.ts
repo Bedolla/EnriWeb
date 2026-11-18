@@ -274,8 +274,7 @@ describe("Web tools property tests (MCP plane)", (): void => {
 
 describe("Web tools property tests R3 (MCP examples, INV3)", (): void => {
   it("P14: every declared inputSchema example parses successfully through the MCP parsers", async (): Promise<void> => {
-    const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
-    const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+    const { Client, InMemoryTransport } = await import("@modelcontextprotocol/client");
     const { EnriWebServer } = await import("../src/server/EnriWebServer.js");
 
     const webFetchTool = {
